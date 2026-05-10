@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulador de Electrónica — Proyecto IA 2026</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>Simulador de Electrónica — Robot Laberinto</h1>
+      <p class="subtitle">Proyecto IA 2026 · ESP32 · L298N · HC-SR04 · Chasis 2WD · Prueba con obstáculos</p>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <h2 class="sidebar-title">Componentes</h2>
+        <ul class="component-list" id="component-list">
+          <li class="comp-item" data-id="esp32"><span class="comp-icon mc">MC</span> ESP32 DevKit</li>
+          <li class="comp-item" data-id="l298n"><span class="comp-icon dr">DR</span> L298N</li>
+          <li class="comp-item" data-id="hc-sr04"><span class="comp-icon sn">SN</span> HC-SR04</li>
+          <li class="comp-item" data-id="motor"><span class="comp-icon mt">M</span> Motor DC</li>
+          <li class="comp-item" data-id="v5"><span class="comp-icon pwr">+5</span> Fuente 5V</li>
+          <li class="comp-item" data-id="gnd"><span class="comp-icon gnd">GND</span> GND</li>
+          <li class="comp-item" data-id="led"><span class="comp-icon led">●</span> LED</li>
+          <li class="comp-item" data-id="resistor"><span class="comp-icon res">Ω</span> Resistor</li>
+          <li class="comp-item" data-id="capacitor"><span class="comp-icon cap">C</span> Capacitor</li>
+          <li class="comp-item" data-id="button"><span class="comp-icon btn">SW</span> Pulsador</li>
+          <li class="comp-item" data-id="buzzer"><span class="comp-icon buzz">BZ</span> Zumbador</li>
+          <li class="comp-item" data-id="ldr"><span class="comp-icon ldr">LDR</span> LDR</li>
+          <li class="comp-item" data-id="pot"><span class="comp-icon pot">POT</span> Potenciómetro</li>
+          <li class="comp-item" data-id="diode"><span class="comp-icon dio">D</span> Diodo</li>
+          <li class="comp-item" data-id="switch"><span class="comp-icon sw">S</span> Interruptor</li>
+        </ul>
+        <div class="sidebar-footer">
+          <p class="hint">Esquemático con todas las conexiones etiquetadas. Chasis 2WD y área de prueba para el sensor.</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="panel-section">
+          <h2 class="section-title">Esquemático — Conexiones completas</h2>
+          <div class="circuit-wrap">
+            <div id="circuit" class="circuit"></div>
+          </div>
+        </section>
+
+        <div class="two-col">
+          <section class="panel-section chassis-section">
+            <h2 class="section-title">Carrito 2WD — Vista 3D (componentes montados)</h2>
+            <p class="section-hint">Arrastra con el ratón para girar la vista. Componentes: chasis, ruedas, ESP32, L298N, HC-SR04, batería.</p>
+            <div id="view3d" class="view3d-wrap">
+              <div id="view3d-placeholder" class="view3d-placeholder">Cargando vista 3D…</div>
+            </div>
+          </section>
+          <section class="panel-section test-section">
+            <h2 class="section-title">Área de prueba del sensor</h2>
+            <p class="section-hint">Coloca obstáculos (clic). El sensor mide la distancia real al obstáculo más cercano.</p>
+            <div class="test-toolbar">
+              <button type="button" id="btn-add-obstacle" class="btn btn-outline btn-sm">Agregar obstáculo</button>
+              <button type="button" id="btn-clear-obstacles" class="btn btn-outline btn-sm">Limpiar obstáculos</button>
+              <label class="mode-toggle">
+                <input type="checkbox" id="use-test-area" checked>
+                Usar área (sensor real)
+              </label>
+            </div>
+            <div class="test-area-wrap">
+              <canvas id="test-area" width="400" height="320"></canvas>
+              <div id="sensor-distance" class="sensor-readout">Distancia: — cm</div>
+            </div>
+          </section>
+        </div>
+
+        <div class="controls">
+          <div class="control-group">
+            <label for="distance">Distancia (cm) <span class="muted">— solo si no usas área</span></label>
+            <input type="range" id="distance" min="0" max="100" value="50" step="1">
+            <span id="distance-value" class="value">50</span>
+          </div>
+          <div class="control-group">
+            <label for="speed">Velocidad simulación</label>
+            <input type="range" id="speed" min="1" max="10" value="5" step="1">
+            <span id="speed-value" class="value">5</span>
+          </div>
+          <div class="control-buttons">
+            <button type="button" id="btn-run" class="btn btn-primary">Iniciar simulación</button>
+            <button type="button" id="btn-stop" class="btn btn-outline">Detener</button>
+          </div>
+          <div id="status" class="status">Detenido</div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="three.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

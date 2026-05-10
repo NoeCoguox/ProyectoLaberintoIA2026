@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" aria-hidden="true">
+  <!-- Inspirado en los colores institucionales UMG; puedes sustituir por logo oficial PNG -->
+  <circle cx="64" cy="64" r="62" fill="#C83232"/>
+  <circle cx="64" cy="64" r="54" fill="none" stroke="#B5955A" stroke-width="3"/>
+  <circle cx="64" cy="64" r="46" fill="#2D70A4"/>
+  <path fill="#0c1f35" opacity="0.25" d="M64 24a40 40 0 1040 40H24A40 40 0 0164 24z"/>
+  <text x="64" y="46" text-anchor="middle" fill="#ffffff" font-family="Georgia,Times New Roman,serif" font-size="13" font-weight="700">UMG</text>
+  <text x="64" y="62" text-anchor="middle" fill="#0f172a" font-family="Georgia,Times New Roman,serif" font-size="22" font-weight="700">1966</text>
+  <text x="64" y="112" text-anchor="middle" fill="#e8f4fc" font-family="Georgia,Times New Roman,serif" font-size="5.5" font-weight="600">GUATEMALA</text>
+  <circle cx="64" cy="78" r="14" fill="#f1f5f9" opacity="0.12"/>
+</svg>

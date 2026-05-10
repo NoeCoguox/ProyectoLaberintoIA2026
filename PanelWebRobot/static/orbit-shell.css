@@ -1,0 +1,939 @@
+/**
+ * Orbit Shell — capa visual unificada (“centro de comando” neón).
+ * Carga última: pisa el aspecto marrón/ocre de los temas y aplica el mismo
+ * lenguaje en index, manual, mapa y laberinto físico.
+ */
+
+/* ─── Tipografía global (Syne = titulares de impacto) ─── */
+body.orbit-shell.panel-app {
+  --os-display: "Syne", var(--font);
+  font-feature-settings: "ss01" on, "liga" on;
+}
+
+body.orbit-shell.panel-app .umg-topbar__title,
+body.orbit-shell.panel-app .umg-panelHead__title,
+body.orbit-shell.panel-app .umg-dashIntro__title,
+body.orbit-shell.panel-app .umg-hubCard__name,
+body.orbit-shell.panel-app .umg-toolCard__title,
+body.orbit-shell.panel-app .umg-sidebar__uni,
+body.orbit-shell.panel-app .map-title,
+body.orbit-shell.panel-app .top-bar h1,
+body.orbit-shell.panel-app .lf-pro-title {
+  font-family: var(--os-display), system-ui, sans-serif !important;
+}
+
+/* ─── Tokens por tema (solo acento; el cromado es siempre oscuro‑neón) ─── */
+html:not([data-theme]) body.orbit-shell.panel-app,
+html[data-theme="aurora"] body.orbit-shell.panel-app {
+  color-scheme: dark;
+  --bg-deep: #040406;
+  --bg-elevated: #0a0a12;
+  --bg-card: rgba(14, 12, 28, 0.78);
+  --bg-card-solid: #12101c;
+  --border: rgba(167, 139, 250, 0.28);
+  --border-strong: rgba(56, 189, 246, 0.55);
+  --text: #f5f3ff;
+  --text-muted: #a5a8c9;
+  --text-dim: #6d7194;
+  --accent: #c4b5fd;
+  --accent-2: #22d3ee;
+  --accent-soft: rgba(167, 139, 250, 0.16);
+  --accent-teal-soft: rgba(34, 211, 238, 0.12);
+  --success: #4ade80;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  --shadow-glow:
+    0 0 0 1px rgba(167, 139, 250, 0.12),
+    0 0 40px rgba(99, 102, 241, 0.08);
+  --swatch-empty: linear-gradient(145deg, #1e1c2e, #0f0e18);
+}
+
+html[data-theme="coral"] body.orbit-shell.panel-app {
+  color-scheme: dark;
+  --bg-deep: #060304;
+  --bg-elevated: #140810;
+  --bg-card: rgba(28, 12, 20, 0.82);
+  --bg-card-solid: #180a10;
+  --border: rgba(251, 113, 133, 0.3);
+  --border-strong: rgba(251, 191, 36, 0.5);
+  --text: #fff5f7;
+  --text-muted: #cfa8b8;
+  --text-dim: #8f6f7e;
+  --accent: #fb7185;
+  --accent-2: #fcd34d;
+  --accent-soft: rgba(251, 113, 133, 0.14);
+  --accent-teal-soft: rgba(251, 191, 36, 0.1);
+  --success: #4ade80;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --shadow: 0 22px 55px rgba(0, 0, 0, 0.55);
+  --shadow-glow: 0 0 0 1px rgba(251, 113, 133, 0.14), 0 0 48px rgba(248, 113, 113, 0.06);
+}
+
+html[data-theme="laguna"] body.orbit-shell.panel-app {
+  color-scheme: dark;
+  --bg-deep: #020814;
+  --bg-elevated: #052028;
+  --bg-card: rgba(8, 32, 40, 0.82);
+  --bg-card-solid: #063238;
+  --border: rgba(45, 212, 191, 0.32);
+  --border-strong: rgba(125, 211, 252, 0.5);
+  --text: #ecfeff;
+  --text-muted: #8cb8c4;
+  --text-dim: #5c828e;
+  --accent: #2dd4bf;
+  --accent-2: #7dd3fc;
+  --accent-soft: rgba(45, 212, 191, 0.14);
+  --accent-teal-soft: rgba(125, 211, 252, 0.12);
+  --success: #6ee7b7;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --shadow: 0 22px 55px rgba(0, 10, 20, 0.55);
+  --shadow-glow: 0 0 0 1px rgba(45, 212, 191, 0.12), 0 0 40px rgba(34, 211, 238, 0.08);
+}
+
+html[data-theme="paper"] body.orbit-shell.panel-app {
+  color-scheme: light;
+  --bg-deep: #f4f6fb;
+  --bg-elevated: #ffffff;
+  --bg-card: rgba(255, 255, 255, 0.9);
+  --bg-card-solid: #ffffff;
+  --border: rgba(79, 70, 229, 0.12);
+  --border-strong: rgba(124, 58, 237, 0.35);
+  --text: #0f0920;
+  --text-muted: #4b4668;
+  --text-dim: #6b6585;
+  --accent: #6d28d9;
+  --accent-2: #0891b2;
+  --accent-soft: rgba(124, 58, 237, 0.1);
+  --accent-teal-soft: rgba(8, 145, 178, 0.1);
+  --success: #059669;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --shadow: 0 12px 40px rgba(15, 9, 32, 0.08);
+  --shadow-glow: 0 0 0 1px rgba(124, 58, 237, 0.08);
+}
+
+/* UMG overrides (sidebar / shell) — ya no dorado/ocre */
+html[data-theme="aurora"] body.orbit-shell.umg-app,
+html:not([data-theme]) body.orbit-shell.umg-app {
+  --umg-sidebar-title: var(--text);
+  --umg-sidebar-muted: var(--text-muted);
+  --umg-section-label: var(--accent-2);
+  --umg-nav-active: linear-gradient(
+    90deg,
+    rgba(34, 211, 238, 0.22) 0%,
+    rgba(167, 139, 250, 0.08) 100%
+  );
+  --umg-chip-bg: rgba(34, 211, 238, 0.15);
+  --umg-chip-fg: var(--accent-2);
+}
+
+html[data-theme="coral"] body.orbit-shell.umg-app {
+  --umg-sidebar-title: var(--text);
+  --umg-sidebar-muted: var(--text-muted);
+  --umg-section-label: var(--accent-2);
+  --umg-nav-active: linear-gradient(
+    90deg,
+    rgba(251, 191, 36, 0.2) 0%,
+    rgba(251, 113, 133, 0.1) 100%
+  );
+  --umg-chip-bg: rgba(251, 113, 133, 0.15);
+  --umg-chip-fg: #ffe8ed;
+}
+
+html[data-theme="laguna"] body.orbit-shell.umg-app {
+  --umg-sidebar-title: var(--text);
+  --umg-sidebar-muted: var(--text-muted);
+  --umg-section-label: var(--accent);
+  --umg-nav-active: linear-gradient(
+    90deg,
+    rgba(45, 212, 191, 0.26) 0%,
+    rgba(125, 211, 252, 0.1) 100%
+  );
+  --umg-chip-bg: rgba(125, 211, 252, 0.15);
+  --umg-chip-fg: #e0f2fe;
+}
+
+html[data-theme="paper"] body.orbit-shell.umg-app {
+  --umg-sidebar-title: var(--text);
+  --umg-sidebar-muted: var(--text-muted);
+  --umg-section-label: var(--accent);
+  --umg-nav-active: linear-gradient(
+    90deg,
+    rgba(124, 58, 237, 0.12),
+    rgba(8, 145, 178, 0.08)
+  );
+  --umg-chip-bg: rgba(124, 58, 237, 0.1);
+  --umg-chip-fg: #4c1d95;
+}
+
+/* Fondos UMG principales — rejilla técnica + halos fríos/cálidos */
+body.orbit-shell.umg-app {
+  background: var(--bg-deep);
+}
+
+body.orbit-shell .umg-bg {
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 110% 80% at 8% -20%, rgba(167, 139, 250, 0.32), transparent 52%),
+    radial-gradient(ellipse 90% 70% at 92% 5%, rgba(34, 211, 238, 0.12), transparent 45%),
+    linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-elevated) 55%, var(--bg-deep) 100%) !important;
+}
+
+html[data-theme="coral"] body.orbit-shell .umg-bg {
+  background:
+    radial-gradient(ellipse 100% 80% at 10% -15%, rgba(251, 113, 133, 0.25), transparent 50%),
+    radial-gradient(ellipse 80% 60% at 95% 0%, rgba(251, 191, 36, 0.1), transparent 48%),
+    linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-elevated) 52%, var(--bg-deep) 100%) !important;
+}
+
+html[data-theme="laguna"] body.orbit-shell .umg-bg {
+  background:
+    radial-gradient(ellipse 100% 80% at 15% -12%, rgba(45, 212, 191, 0.24), transparent 50%),
+    radial-gradient(ellipse 85% 55% at 90% 5%, rgba(56, 189, 246, 0.15), transparent 46%),
+    linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-elevated) 54%, var(--bg-deep) 100%) !important;
+}
+
+html[data-theme="paper"] body.orbit-shell .umg-bg {
+  background:
+    radial-gradient(ellipse 95% 70% at 12% -8%, rgba(124, 58, 237, 0.12), transparent 48%),
+    radial-gradient(ellipse 80% 55% at 88% 0%, rgba(8, 145, 178, 0.1), transparent 45%),
+    linear-gradient(180deg, var(--bg-deep), #fafbff) !important;
+}
+
+body.orbit-shell .umg-bg--floor {
+  opacity: 0.55;
+  background:
+    radial-gradient(ellipse 100% 70% at 50% 100%, rgba(34, 211, 238, 0.06), transparent 55%),
+    repeating-linear-gradient(
+      -18deg,
+      transparent,
+      transparent 44px,
+      rgba(167, 139, 250, 0.04) 44px,
+      rgba(167, 139, 250, 0.04) 45px
+    ) !important;
+}
+
+body.orbit-shell .umg-vignette {
+  background: radial-gradient(ellipse 80% 85% at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.45) 100%);
+}
+
+html[data-theme="paper"] body.orbit-shell .umg-vignette {
+  opacity: 0.35;
+  background: radial-gradient(ellipse 85% 90% at 50% 35%, transparent 40%, rgba(15, 9, 32, 0.04) 100%);
+}
+
+body.orbit-shell .grain.grain--umg {
+  opacity: 0.07;
+}
+
+/* Sidebar densidad + línea activa lateral */
+body.orbit-shell.umg-app .umg-sidebar {
+  background: linear-gradient(
+    172deg,
+    rgba(14, 12, 24, 0.98) 0%,
+    rgba(8, 7, 14, 0.99) 100%
+  ) !important;
+  border-right-color: rgba(167, 139, 250, 0.15) !important;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+html[data-theme="paper"] body.orbit-shell.umg-app .umg-sidebar {
+  background: linear-gradient(175deg, #ffffff 0%, #eef0f8 100%) !important;
+  border-right-color: rgba(15, 9, 32, 0.1) !important;
+}
+
+body.orbit-shell.umg-app .umg-sidebar__brand {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+body.orbit-shell.umg-app .umg-sidebar__logo {
+  box-shadow:
+    0 0 0 2px var(--accent-2),
+    0 14px 40px rgba(0, 0, 0, 0.45);
+}
+
+body.orbit-shell.lf-pro .lf-pro-logo {
+  box-shadow:
+    0 0 0 2px var(--accent-2),
+    0 10px 32px rgba(0, 0, 0, 0.35);
+}
+
+body.orbit-shell.umg-app .umg-nav__btn {
+  border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+body.orbit-shell.umg-app .umg-nav__btn:hover {
+  background: rgba(167, 139, 250, 0.1);
+  border-color: transparent;
+}
+
+body.orbit-shell.umg-app .umg-nav__btn.is-active {
+  border-left-color: var(--accent-2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 24px rgba(34, 211, 238, 0.06);
+}
+
+body.orbit-shell.umg-app .umg-work {
+  background: linear-gradient(180deg, rgba(12, 20, 40, 0.12) 0%, transparent 32%) !important;
+}
+
+html[data-theme="paper"] body.orbit-shell.umg-app .umg-work {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, transparent 36%) !important;
+}
+
+body.orbit-shell.umg-app .umg-topbar {
+  border-radius: var(--radius);
+  border-color: var(--border);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-glow);
+}
+
+body.orbit-shell.umg-app .umg-kpi {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 14px) 100%, 0 100%);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+body.orbit-shell.umg-app .umg-hubCard,
+body.orbit-shell.umg-app .umg-toolCard {
+  border-radius: var(--radius);
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+
+body.orbit-shell.umg-app .umg-toolCard__visual {
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-theme="aurora"] body.orbit-shell .umg-bg,
+  html:not([data-theme]) body.orbit-shell .umg-bg {
+    animation: os-halo-shift 28s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes os-halo-shift {
+  from {
+    filter: saturate(1) hue-rotate(0deg);
+  }
+  to {
+    filter: saturate(1.15) hue-rotate(16deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body.orbit-shell .umg-bg {
+    animation: none !important;
+  }
+}
+
+/* ─── Subpáginas manual / mapa (.bg-mesh) ─── */
+body.orbit-shell.manual-page,
+body.orbit-shell.map-page {
+  background: var(--bg-deep) !important;
+}
+
+body.orbit-shell.manual-page .bg-mesh,
+body.orbit-shell.map-page .bg-mesh {
+  background:
+    radial-gradient(ellipse 100% 80% at 12% -12%, rgba(167, 139, 250, 0.18), transparent 52%),
+    radial-gradient(ellipse 90% 60% at 95% 5%, rgba(34, 211, 238, 0.08), transparent 48%),
+    linear-gradient(168deg, var(--bg-deep) 0%, var(--bg-elevated) 48%, var(--bg-deep) 100%) !important;
+  opacity: 1;
+}
+
+html[data-theme="coral"] body.orbit-shell.manual-page .bg-mesh,
+html[data-theme="coral"] body.orbit-shell.map-page .bg-mesh {
+  background:
+    radial-gradient(ellipse 100% 75% at 10% -10%, rgba(251, 113, 133, 0.16), transparent 50%),
+    radial-gradient(ellipse 85% 55% at 92% 0%, rgba(251, 191, 36, 0.08), transparent 45%),
+    linear-gradient(168deg, var(--bg-deep) 0%, var(--bg-elevated) 50%, var(--bg-deep) 100%) !important;
+}
+
+html[data-theme="laguna"] body.orbit-shell.manual-page .bg-mesh,
+html[data-theme="laguna"] body.orbit-shell.map-page .bg-mesh {
+  background:
+    radial-gradient(ellipse 100% 75% at 12% -10%, rgba(45, 212, 191, 0.16), transparent 50%),
+    radial-gradient(ellipse 75% 50% at 92% 0%, rgba(56, 189, 246, 0.1), transparent 44%),
+    linear-gradient(168deg, var(--bg-deep) 0%, var(--bg-elevated) 50%, var(--bg-deep) 100%) !important;
+}
+
+html[data-theme="paper"] body.orbit-shell.manual-page .bg-mesh,
+html[data-theme="paper"] body.orbit-shell.map-page .bg-mesh {
+  background:
+    radial-gradient(ellipse 90% 65% at 15% 0%, rgba(124, 58, 237, 0.1), transparent 48%),
+    linear-gradient(180deg, var(--bg-deep) 0%, #ffffff 100%) !important;
+}
+
+body.orbit-shell.manual-page .card,
+body.orbit-shell.map-page .card {
+  background: var(--bg-card) !important;
+  border-color: var(--border) !important;
+  box-shadow: var(--shadow-glow);
+  border-radius: var(--radius) !important;
+}
+
+body.orbit-shell.manual-page .brand-pill,
+body.orbit-shell.map-page .brand-pill {
+  border-color: var(--border-strong);
+  background: rgba(167, 139, 250, 0.12);
+  color: var(--accent);
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+}
+
+body.orbit-shell.manual-page .manual-back,
+body.orbit-shell.map-page .map-nav__back {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  text-decoration: none !important;
+  color: var(--accent-2) !important;
+}
+
+body.orbit-shell.manual-page .manual-back:hover,
+body.orbit-shell.map-page .map-nav__back:hover {
+  border-color: var(--border-strong);
+  background: var(--accent-soft);
+}
+
+body.orbit-shell.map-page .map-crear-btn,
+body.orbit-shell.map-page .map-crear-btn--large {
+  border-radius: var(--radius-sm);
+  border-color: var(--border-strong) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(34, 211, 238, 0.35),
+    rgba(167, 139, 250, 0.25)
+  ) !important;
+  color: #f8fafc !important;
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.15);
+}
+
+html[data-theme="coral"] body.orbit-shell.map-page .map-crear-btn,
+html[data-theme="coral"] body.orbit-shell.map-page .map-crear-btn--large {
+  background: linear-gradient(
+    135deg,
+    rgba(251, 191, 36, 0.35),
+    rgba(251, 113, 133, 0.28)
+  ) !important;
+}
+
+html[data-theme="laguna"] body.orbit-shell.map-page .map-crear-btn,
+html[data-theme="laguna"] body.orbit-shell.map-page .map-crear-btn--large {
+  background: linear-gradient(
+    135deg,
+    rgba(45, 212, 191, 0.35),
+    rgba(56, 189, 246, 0.28)
+  ) !important;
+}
+
+/* ─── Laberinto físico (.lf-pro) ─── */
+body.orbit-shell.lf-pro {
+  background: var(--bg-deep) !important;
+}
+
+body.orbit-shell.lf-pro .lf-pro-bg {
+  background:
+    radial-gradient(ellipse 100% 75% at 5% -10%, rgba(167, 139, 250, 0.2), transparent 52%),
+    radial-gradient(ellipse 90% 60% at 100% 0%, rgba(34, 211, 238, 0.08), transparent 46%),
+    linear-gradient(175deg, var(--bg-deep) 0%, var(--bg-elevated) 45%, var(--bg-deep) 100%) !important;
+}
+
+body.orbit-shell.lf-pro .lf-pro-bg--mesh {
+  opacity: 0.4;
+  background-image:
+    linear-gradient(rgba(167, 139, 250, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(167, 139, 250, 0.05) 1px, transparent 1px) !important;
+}
+
+body.orbit-shell.lf-pro .lf-pro-header {
+  border-bottom-color: var(--border);
+}
+
+body.orbit-shell.lf-pro .lf-pro-eyebrow {
+  color: var(--accent-2) !important;
+}
+
+body.orbit-shell.lf-pro .lf-pro-title {
+  letter-spacing: -0.03em;
+}
+
+body.orbit-shell.lf-pro .lf-glass {
+  background: var(--bg-card) !important;
+  border-color: var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow-glow);
+}
+
+body.orbit-shell.lf-pro .lf-pro-btn {
+  border-radius: var(--radius-sm);
+}
+
+body.orbit-shell.lf-pro .lf-kpi {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 12px) 100%, 0 100%);
+}
+
+/* Botones primarios dentro del tema heredado */
+body.orbit-shell.panel-app button.secondary,
+body.orbit-shell.panel-app .secondary.btn-compact {
+  border-radius: var(--radius-sm);
+  border-color: var(--border);
+  font-family: var(--mono);
+  font-weight: 500;
+}
+
+body.orbit-shell.panel-app button.secondary:not(:disabled):hover,
+body.orbit-shell.panel-app .secondary.btn-compact:not(:disabled):hover {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Dinámica (movimiento vivo) · respeta prefers-reduced-motion
+   ═══════════════════════════════════════════════════════════════ */
+
+@keyframes os-enter-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes os-enter-blur-off {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes os-panel-snap {
+  from {
+    opacity: 0.35;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes os-mesh-slide {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1.02);
+  }
+  33% {
+    transform: translate3d(-14px, 6px, 0) scale(1.02);
+  }
+  66% {
+    transform: translate3d(8px, -10px, 0) scale(1.02);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1.02);
+  }
+}
+
+@keyframes os-grain-breathe {
+  from {
+    opacity: 0.055;
+  }
+  to {
+    opacity: 0.095;
+  }
+}
+
+@keyframes os-halo-shift-warm {
+  from {
+    filter: saturate(1) hue-rotate(-6deg);
+  }
+  to {
+    filter: saturate(1.14) hue-rotate(14deg);
+  }
+}
+
+@keyframes os-halo-shift-cool {
+  from {
+    filter: saturate(1) hue-rotate(-10deg);
+  }
+  to {
+    filter: saturate(1.12) hue-rotate(14deg);
+  }
+}
+
+@keyframes os-topbar-scan {
+  0% {
+    box-shadow:
+      var(--shadow-glow, 0 0 0 1px rgba(255, 255, 255, 0.04)),
+      inset 0 0 24px transparent;
+  }
+  40% {
+    box-shadow:
+      var(--shadow-glow, 0 0 0 1px rgba(255, 255, 255, 0.04)),
+      inset 0 0 42px rgba(34, 211, 238, 0.04);
+  }
+  100% {
+    box-shadow:
+      var(--shadow-glow, 0 0 0 1px rgba(255, 255, 255, 0.04)),
+      inset 0 0 24px transparent;
+  }
+}
+
+@keyframes os-live-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.28);
+    opacity: 0.85;
+  }
+}
+
+@keyframes os-chip-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(74, 222, 128, 0.55),
+      0 0 20px rgba(74, 222, 128, 0.28);
+  }
+}
+
+@keyframes os-dash-flash {
+  from {
+    filter: brightness(1.12) saturate(1.08);
+    transform: scale(1.01);
+  }
+  to {
+    filter: brightness(1) saturate(1);
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Fondo: halos también en Coral y Laguna */
+  html[data-theme="coral"] body.orbit-shell .umg-bg {
+    animation: os-halo-shift-warm 22s ease-in-out infinite alternate;
+  }
+
+  html[data-theme="laguna"] body.orbit-shell .umg-bg {
+    animation: os-halo-shift-cool 26s ease-in-out infinite alternate;
+  }
+
+  body.orbit-shell .umg-bg--floor {
+    will-change: transform;
+    animation: os-mesh-slide 52s ease-in-out infinite;
+  }
+
+  body.orbit-shell .grain.grain--umg {
+    animation: os-grain-breathe 7s ease-in-out infinite alternate;
+  }
+
+  body.orbit-shell.manual-page .bg-mesh,
+  body.orbit-shell.map-page .bg-mesh {
+    animation: os-halo-shift-cool 32s ease-in-out infinite alternate;
+  }
+
+  html[data-theme="coral"] body.orbit-shell.manual-page .bg-mesh,
+  html[data-theme="coral"] body.orbit-shell.map-page .bg-mesh {
+    animation: os-halo-shift-warm 30s ease-in-out infinite alternate;
+  }
+
+  body.orbit-shell.lf-pro .lf-pro-bg--mesh {
+    background-size: 40px 40px !important;
+    animation: os-mesh-slide 56s ease-in-out infinite;
+  }
+
+  body.orbit-shell.lf-pro .lf-pro-bg--glow {
+    animation: os-grain-breathe 10s ease-in-out infinite alternate;
+    opacity: 0.65;
+  }
+
+  /* Panel principal: cambio de pestaña + contenido escalonado */
+  body.orbit-shell.umg-app .umg-panel.is-active {
+    animation: os-panel-snap 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  body.orbit-shell.umg-app .umg-topbar {
+    animation: os-topbar-scan 10s ease-in-out infinite;
+  }
+
+  body.orbit-shell.umg-app .umg-topbar__lead {
+    animation: os-enter-blur-off 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-dashIntro {
+    animation: os-enter-rise 0.48s cubic-bezier(0.22, 1, 0.36, 1) 0.04s backwards;
+  }
+
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-kpi {
+    animation: os-enter-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-kpi:nth-child(1) {
+    animation-delay: 0.07s;
+  }
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-kpi:nth-child(2) {
+    animation-delay: 0.12s;
+  }
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-kpi:nth-child(3) {
+    animation-delay: 0.17s;
+  }
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-kpi:nth-child(4) {
+    animation-delay: 0.22s;
+  }
+
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-hubCard {
+    animation: os-enter-rise 0.52s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+    transition:
+      transform 0.32s cubic-bezier(0.34, 1.4, 0.64, 1),
+      box-shadow 0.32s ease,
+      border-color 0.25s ease;
+  }
+
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-hubCard:nth-child(1) {
+    animation-delay: 0.06s;
+  }
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-hubCard:nth-child(2) {
+    animation-delay: 0.11s;
+  }
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-hubCard:nth-child(3) {
+    animation-delay: 0.16s;
+  }
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-hubCard:nth-child(4) {
+    animation-delay: 0.21s;
+  }
+
+  body.orbit-shell.umg-app .umg-hubCard:hover {
+    transform: translateY(-5px) scale(1.015);
+  }
+
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-toolCard {
+    animation: os-enter-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+    transition:
+      transform 0.38s cubic-bezier(0.34, 1.45, 0.64, 1),
+      box-shadow 0.35s ease,
+      border-color 0.28s ease;
+  }
+
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-toolCard:nth-child(1) {
+    animation-delay: 0.05s;
+  }
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-toolCard:nth-child(2) {
+    animation-delay: 0.12s;
+  }
+  body.orbit-shell.umg-app .umg-panel.is-active .umg-toolCard:nth-child(3) {
+    animation-delay: 0.19s;
+  }
+
+  body.orbit-shell.umg-app .umg-toolCard:hover {
+    transform: translateY(-6px) scale(1.02);
+  }
+
+  body.orbit-shell.umg-app .umg-nav__btn {
+    transition:
+      transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1),
+      background 0.2s ease,
+      border-color 0.2s ease,
+      box-shadow 0.25s ease;
+  }
+
+  body.orbit-shell.umg-app .umg-nav__btn:hover {
+    transform: translateX(4px);
+  }
+
+  body.orbit-shell.umg-app .umg-nav__btn.is-active {
+    transform: translateX(2px);
+  }
+
+  body.orbit-shell.umg-app .umg-chip--pulse.on {
+    animation:
+      umg-pulse-chip 1.4s ease-in-out infinite,
+      os-chip-glow 2.2s ease-in-out infinite;
+  }
+
+  body.orbit-shell.umg-app .grid-dashboard--umg.just-updated {
+    animation: os-dash-flash 0.55s ease-out;
+  }
+
+  /* Manual / Mapa */
+  body.orbit-shell.manual-page .top-bar,
+  body.orbit-shell.map-page .map-header {
+    animation: os-enter-rise 0.52s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  body.orbit-shell.manual-page .manual-wrap section.card,
+  body.orbit-shell.map-page .map-wrap section.card {
+    animation: os-enter-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+    transition:
+      transform 0.3s cubic-bezier(0.34, 1.35, 0.64, 1),
+      box-shadow 0.3s ease;
+  }
+
+  body.orbit-shell.manual-page .manual-wrap section.card:nth-of-type(1),
+  body.orbit-shell.map-page .map-wrap section.card:nth-of-type(1) {
+    animation-delay: 0.06s;
+  }
+  body.orbit-shell.manual-page .manual-wrap section.card:nth-of-type(2),
+  body.orbit-shell.map-page .map-wrap section.card:nth-of-type(2) {
+    animation-delay: 0.12s;
+  }
+  body.orbit-shell.manual-page .manual-wrap section.card:nth-of-type(3),
+  body.orbit-shell.map-page .map-wrap section.card:nth-of-type(3) {
+    animation-delay: 0.18s;
+  }
+  body.orbit-shell.manual-page .manual-wrap section.card:nth-of-type(4),
+  body.orbit-shell.map-page .map-wrap section.card:nth-of-type(4) {
+    animation-delay: 0.24s;
+  }
+
+  body.orbit-shell.manual-page .manual-wrap section.card:hover,
+  body.orbit-shell.map-page .map-wrap section.card:hover {
+    transform: translateY(-3px);
+  }
+
+  body.orbit-shell.map-page .map-crear-btn {
+    transition:
+      transform 0.28s cubic-bezier(0.34, 1.5, 0.64, 1),
+      filter 0.2s ease,
+      box-shadow 0.3s ease;
+  }
+
+  body.orbit-shell.map-page .map-crear-btn:active {
+    transform: scale(0.97);
+  }
+
+  /* Laberinto físico */
+  body.orbit-shell.lf-pro .lf-pro-header {
+    animation: os-enter-rise 0.52s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  body.orbit-shell.lf-pro .lf-pro-intro {
+    animation: os-enter-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.08s backwards;
+  }
+
+  body.orbit-shell.lf-pro .lf-legend--pro {
+    animation: os-enter-blur-off 0.45s 0.12s backwards;
+  }
+
+  body.orbit-shell.lf-pro .lf-map-hero {
+    animation: os-enter-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.1s backwards;
+    transition:
+      transform 0.35s cubic-bezier(0.34, 1.35, 0.64, 1),
+      box-shadow 0.35s ease;
+  }
+
+  body.orbit-shell.lf-pro .lf-map-hero:hover {
+    transform: translateY(-2px);
+  }
+
+  body.orbit-shell.lf-pro .lf-badge-live__dot {
+    animation: os-live-pulse 1.25s ease-in-out infinite;
+  }
+
+  body.orbit-shell.lf-pro .lf-kpi {
+    transition:
+      transform 0.25s cubic-bezier(0.34, 1.35, 0.64, 1),
+      border-color 0.2s ease;
+  }
+
+  body.orbit-shell.lf-pro .lf-kpi:hover {
+    transform: translateY(-2px);
+  }
+
+  body.orbit-shell.panel-app input[type="text"],
+  body.orbit-shell.panel-app input[type="number"],
+  body.orbit-shell.panel-app select,
+  body.orbit-shell.panel-app .umg-themeSelect {
+    transition:
+      border-color 0.25s ease,
+      box-shadow 0.25s ease,
+      transform 0.18s ease;
+  }
+
+  body.orbit-shell.panel-app input:focus,
+  body.orbit-shell.panel-app select:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-2);
+    transform: scale(1.01);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.orbit-shell .umg-bg--floor,
+  body.orbit-shell .grain.grain--umg,
+  body.orbit-shell.manual-page .bg-mesh,
+  body.orbit-shell.map-page .bg-mesh,
+  body.orbit-shell.lf-pro .lf-pro-bg--mesh,
+  body.orbit-shell.lf-pro .lf-pro-bg--glow {
+    animation: none !important;
+  }
+
+  html[data-theme="aurora"] body.orbit-shell .umg-bg,
+  html:not([data-theme]) body.orbit-shell .umg-bg,
+  html[data-theme="coral"] body.orbit-shell .umg-bg,
+  html[data-theme="laguna"] body.orbit-shell .umg-bg {
+    animation: none !important;
+    filter: none !important;
+  }
+
+  body.orbit-shell.umg-app .umg-topbar {
+    animation: none !important;
+  }
+
+  body.orbit-shell.umg-app .umg-panel.is-active,
+  body.orbit-shell.umg-app .umg-topbar__lead,
+  body.orbit-shell.umg-app .umg-dashIntro,
+  body.orbit-shell.umg-app .umg-kpi,
+  body.orbit-shell.umg-app .umg-hubCard,
+  body.orbit-shell.umg-app .umg-toolCard,
+  body.orbit-shell.manual-page .top-bar,
+  body.orbit-shell.map-page .map-header,
+  body.orbit-shell.manual-page .manual-wrap section.card,
+  body.orbit-shell.map-page .map-wrap section.card,
+  body.orbit-shell.lf-pro .lf-pro-header,
+  body.orbit-shell.lf-pro .lf-pro-intro,
+  body.orbit-shell.lf-pro .lf-legend--pro,
+  body.orbit-shell.lf-pro .lf-map-hero {
+    animation: none !important;
+  }
+
+  body.orbit-shell.umg-app .grid-dashboard--umg.just-updated {
+    animation: none !important;
+  }
+
+  body.orbit-shell.umg-app .umg-chip--pulse.on {
+    animation: umg-pulse-chip 1.6s ease-in-out infinite;
+  }
+
+  body.orbit-shell.lf-pro .lf-badge-live__dot {
+    animation: none !important;
+  }
+}

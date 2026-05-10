@@ -1,0 +1,337 @@
+<body class="panel-app umg-app">
+  <div class="umg-bg" aria-hidden="true"></div>
+  <div class="umg-bg umg-bg--floor" aria-hidden="true"></div>
+  <div class="umg-vignette" aria-hidden="true"></div>
+  <div class="grain grain--umg" aria-hidden="true"></div>
+
+  <button type="button" class="umg-burger" id="umgBurger" aria-expanded="false" aria-controls="umgSidebar">
+    <span class="umg-burger__line"></span>
+    <span class="umg-burger__line"></span>
+    <span class="umg-burger__line"></span>
+    <span class="umg-sr-only">Abrir o cerrar menú</span>
+  </button>
+
+  <div class="umg-layout" id="umgLayout">
+    <aside class="umg-sidebar" id="umgSidebar" aria-label="Menú del panel">
+      <div class="umg-sidebar__brand">
+        <img class="umg-sidebar__logo" src="{{ url_for('static', filename='umg-seal.svg') }}" width="76" height="76" alt="Universidad Mariano Gálvez de Guatemala" />
+        <div class="umg-sidebar__brandText">
+          <span class="umg-sidebar__uni">Universidad Mariano Gálvez</span>
+          <span class="umg-sidebar__project">Proyecto integrador · Laberinto IA · ESP32</span>
+        </div>
+      </div>
+
+      <p class="umg-sidebar__sectionLabel">Navegación por categorías</p>
+      <nav class="umg-nav" role="tablist" aria-label="Categorías del panel">
+        <button type="button" class="umg-nav__btn is-active" role="tab" aria-selected="true" data-panel="overview">
+          <span class="umg-nav__ico" aria-hidden="true">▣</span>
+          <span class="umg-nav__txt">Resumen</span>
+        </button>
+        <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="tools">
+          <span class="umg-nav__ico" aria-hidden="true">▤</span>
+          <span class="umg-nav__txt">Herramientas</span>
+        </button>
+        <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="session">
+          <span class="umg-nav__ico" aria-hidden="true">⎘</span>
+          <span class="umg-nav__txt">Conexión TCP</span>
+        </button>
+        <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="servo">
+          <span class="umg-nav__ico" aria-hidden="true">↻</span>
+          <span class="umg-nav__txt">Servo</span>
+        </button>
+        <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="telemetry">
+          <span class="umg-nav__ico" aria-hidden="true">◈</span>
+          <span class="umg-nav__txt">Sensores</span>
+        </button>
+        <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="hardware">
+          <span class="umg-nav__ico" aria-hidden="true">⌗</span>
+          <span class="umg-nav__txt">Hardware</span>
+        </button>
+        <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="diagnostics">
+          <span class="umg-nav__ico" aria-hidden="true">≋</span>
+          <span class="umg-nav__txt">Diagnóstico</span>
+        </button>
+      </nav>
+
+      <div class="umg-sidebar__footer">
+        <span class="umg-sidebar__chip">TCP 8888</span>
+        <p class="umg-sidebar__hint">Reemplazá <code>umg-seal.svg</code> por el logo oficial en <code>static/</code> si tenés el archivo en alta resolución.</p>
+      </div>
+    </aside>
+
+    <div class="umg-work">
+      <header class="umg-topbar">
+        <div class="umg-topbar__lead">
+          <h1 class="umg-topbar__title">Panel de telemetría del robot</h1>
+          <p class="umg-topbar__sub">Puente web Flask · firmware ESP32 · <strong>U. Mariano Gálvez · Guatemala</strong></p>
+        </div>
+        <div class="umg-topbar__chips">
+          <span id="dockWhoami" class="umg-chip umg-chip--pc" title="IP de esta máquina (vista servidor)">PC · —</span>
+          <span id="dockConnTarget" class="umg-chip umg-chip--robot" aria-live="polite">Robot · —</span>
+          <span id="liveIndicator" class="umg-chip umg-chip--pulse" hidden>En vivo</span>
+          <span id="lastUpdate" class="umg-chip umg-chip--time last-update"></span>
+        </div>
+      </header>
+
+      <div class="umg-panelHost">
+        <section id="panel-overview" class="umg-panel is-active" role="tabpanel">
+          <div class="umg-dashIntro">
+            <h2 class="umg-dashIntro__title">Tablero de entrada</h2>
+            <p class="umg-dashIntro__text">Este espacio agrupa lecturas recientes y atajos. Usá el menú izquierdo para trabajar por bloques: conexión, servo, sensores o diagnóstico.</p>
+          </div>
+          <div class="umg-kpiGrid">
+            <article class="umg-kpi">
+              <h3 class="umg-kpi__label">Celda (TCS34725)</h3>
+              <p id="kpiCelda" class="umg-kpi__value">—</p>
+            </article>
+            <article class="umg-kpi">
+              <h3 class="umg-kpi__label">Distancia ultrasónico</h3>
+              <p id="kpiDist" class="umg-kpi__value">—</p>
+            </article>
+            <article class="umg-kpi">
+              <h3 class="umg-kpi__label">Ángulo servo</h3>
+              <p id="kpiServo" class="umg-kpi__value">—</p>
+            </article>
+            <article class="umg-kpi">
+              <h3 class="umg-kpi__label">Último muestreo</h3>
+              <p id="kpiStamp" class="umg-kpi__value">—</p>
+            </article>
+          </div>
+          <div class="umg-hubGrid">
+            <button type="button" class="umg-hubCard" data-panel-jump="tools">
+              <span class="umg-hubCard__tag">01</span>
+              <span class="umg-hubCard__name">Herramientas</span>
+              <span class="umg-hubCard__desc">Editor de laberinto (tamaño configurable) y control manual del carrito</span>
+            </button>
+            <button type="button" class="umg-hubCard" data-panel-jump="session">
+              <span class="umg-hubCard__tag">02</span>
+              <span class="umg-hubCard__name">Conexión TCP</span>
+              <span class="umg-hubCard__desc">IP, puerto, LEER automático y prueba PING</span>
+            </button>
+            <button type="button" class="umg-hubCard" data-panel-jump="telemetry">
+              <span class="umg-hubCard__tag">03</span>
+              <span class="umg-hubCard__name">Tablero de sensores</span>
+              <span class="umg-hubCard__desc">Celdas de color, distancia y canales RGB en vivo</span>
+            </button>
+            <button type="button" class="umg-hubCard umg-hubCard--accent" data-panel-jump="diagnostics">
+              <span class="umg-hubCard__tag">04</span>
+              <span class="umg-hubCard__name">Diagnóstico</span>
+              <span class="umg-hubCard__desc">Tramas crudas y registro opcional</span>
+            </button>
+          </div>
+        </section>
+
+        <section id="panel-tools" class="umg-panel" role="tabpanel" hidden>
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Herramientas del proyecto</h2>
+            <p class="umg-panelHead__sub">Enlaces a pantallas dedicadas sin perder esta sesión en el navegador.</p>
+          </header>
+          <div class="umg-toolCards">
+            <a href="{{ url_for('mapa') }}" class="umg-toolCard umg-toolCard--blue">
+              <span class="umg-toolCard__eyebrow">Editor</span>
+              <span class="umg-toolCard__title">Laberinto 8×8</span>
+              <span class="umg-toolCard__body">Caminos, paredes y punto meta (verde) · generás un mapa y lo afinás a mano.</span>
+              <span class="umg-toolCard__cta">Abrir editor →</span>
+            </a>
+            <a href="{{ url_for('manual') }}" class="umg-toolCard umg-toolCard--red">
+              <span class="umg-toolCard__eyebrow">Actuadores</span>
+              <span class="umg-toolCard__title">Control manual del carrito</span>
+              <span class="umg-toolCard__body"><code>MOVER:*</code> y pruebas por llanta · cruceta en vista aparte.</span>
+              <span class="umg-toolCard__cta">Abrir control →</span>
+            </a>
+          </div>
+        </section>
+
+        <section id="panel-session" class="umg-panel" role="tabpanel" hidden>
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Sesión TCP con el ESP32</h2>
+            <p class="umg-panelHead__sub">EndPoint del robot en tu LAN. La IP debe coincidir con la del Monitor serie (115200 baud).</p>
+          </header>
+          <div class="card panel-card config config-card umg-card">
+            <div class="field-row field-row--split">
+              <div class="field-group field-group--grow">
+                <label for="host">IP del ESP32</label>
+                <input type="text" id="host" placeholder="192.168.x.x" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="field-group field-group--port">
+                <label for="port">Puerto TCP del ESP32</label>
+                <input type="number" id="port" value="8888" min="1" max="65535" aria-describedby="portEspHint" />
+              </div>
+            </div>
+            <p id="portEspHint" class="panel-card__sub" style="margin-top: 6px;">
+              Debe coincidir con el firmware: habitualmente <strong>8888</strong>.
+              Si en la barra del navegador ves <code>127.0.0.1:5050</code>, ese es solo el panel web en tu PC; no lo pongas aquí (si no tendrás <em>timeout</em>).
+            </p>
+            <div class="tool-row">
+              <button type="button" id="btnPing" class="secondary btn-compact">Ping TCP</button>
+              <button type="button" id="btnLeer" class="secondary btn-compact" title="Una lectura LEER">Forzar LEER</button>
+              <button type="button" id="btnRobotIp" class="secondary btn-compact" title="Comando STATUS">IP del robot</button>
+            </div>
+            <div class="conn-ip-banner conn-ip-banner--flat" aria-live="polite">
+              <div class="conn-row"><span class="conn-label">Destino</span> <code id="connTarget">—</code></div>
+              <div class="conn-row conn-row--muted"><span class="conn-label">Este equipo</span> <code id="whoamiIp">—</code></div>
+              <div id="robotStatusBanner" class="conn-row conn-row--ok" hidden>
+                <span class="conn-label">STATUS Wi‑Fi</span> <code id="robotStatusIp">—</code>
+                <span id="robotStatusRssi" class="conn-ip-banner__rssi"></span>
+              </div>
+            </div>
+            <p class="live-hint live-hint--tight">Conviene <strong>3&nbsp;s</strong> de intervalo si querés sincronizar con <code>SERVO_ANG</code> por USB.</p>
+            <div class="auto-controls auto-controls--stack">
+              <label class="check">
+                <input type="checkbox" id="auto" checked />
+                Actualización automática (<code>LEER</code>)
+              </label>
+              <div class="auto-inline">
+                <label class="auto-label" for="autoInterval">Cada</label>
+                <select id="autoInterval" aria-label="Intervalo de actualización">
+                  <option value="250">0,25 s</option>
+                  <option value="400">0,4 s</option>
+                  <option value="500">0,5 s</option>
+                  <option value="750">0,75 s</option>
+                  <option value="1000">1 s</option>
+                  <option value="2000">2 s</option>
+                  <option value="3000" selected>3 s</option>
+                </select>
+              </div>
+              <label class="check">
+                <input type="checkbox" id="pingTcp" />
+                Ping TCP en segundo plano (2 s)
+              </label>
+            </div>
+            <p id="connMsg" class="msg msg--card"></p>
+            <details class="fold-block">
+              <summary class="fold-block__summary">Registro PING → PONG</summary>
+              <p class="hint fold-block__hint">No es la lectura de sensores. ICMP en Windows: <code>ping -t IP</code>.</p>
+              <pre id="pingLog" class="ping-log"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section id="panel-servo" class="umg-panel" role="tabpanel" hidden>
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Servo del ultrasonido</h2>
+            <p class="umg-panelHead__sub">GPIO 4 · barrido configurado en firmware · lectura <code>SERVO_ANG:</code> en cada ciclo.</p>
+          </header>
+          <div class="card panel-card servo-panel umg-card" aria-labelledby="servoPanelTitle">
+            <h3 id="servoPanelTitle" class="visually-hidden">Control del servo SG90</h3>
+            <div class="servo-panel__row">
+              <div class="servo-angle-block">
+                <div class="servo-angle-readout">
+                  <span id="servoAngleDisplay" class="servo-angle-num">—</span>
+                  <span class="servo-angle-suffix">°</span>
+                </div>
+                <div class="servo-angle-meter" aria-hidden="true">
+                  <div class="servo-angle-meter__track">
+                    <div id="servoAngleFill" class="servo-angle-meter__fill"></div>
+                  </div>
+                  <div class="servo-angle-meter__ticks"><span>0</span><span>90</span><span>180</span></div>
+                </div>
+              </div>
+              <div class="servo-panel__controls">
+                <div class="servo-btn-row">
+                  <button type="button" id="btnServoSweepOn" class="secondary btn-compact">Barrido ON</button>
+                  <button type="button" id="btnServoSweepOff" class="secondary btn-compact">Barrido OFF</button>
+                </div>
+                <div class="servo-manual">
+                  <label class="servo-manual__label" for="servoDeg">Ángulo fijo <span id="servoDegLabel">90</span>°</label>
+                  <input type="range" id="servoDeg" min="0" max="180" value="90" step="1" />
+                  <button type="button" id="btnServoGo" class="secondary btn-compact">Aplicar ángulo</button>
+                  <p class="hint servo-manual__note">Equivale al comando <code>SERVO:</code>. Reactivás barrido con «Barrido ON».</p>
+                </div>
+                <p id="servoMsg" class="msg servo-msg"></p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-telemetry" class="umg-panel" role="tabpanel" hidden>
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Sensores · tablero en vivo</h2>
+            <p class="umg-panelHead__sub">Vista tipo dashboard sobre la última trama válida que devuelve el ESP32 tras <code>LEER</code>.</p>
+          </header>
+          <p id="sensorBanner" class="sensor-banner" hidden></p>
+          <div id="dashGrid" class="grid-dashboard grid-dashboard--main grid-dashboard--umg">
+            <div class="card celda-box dash-card" data-card="celda">
+              <h2 class="dash-card__title"><span class="dash-card__icon" aria-hidden="true">◆</span> Celda</h2>
+              <div id="celdaBadge" class="badge UNKNOWN">—</div>
+              <p class="hint">Clasificación TCS34725 (proporciones R/G/B y clear C).</p>
+              <p id="threshLine" class="hint thresh-hint" hidden></p>
+            </div>
+            <div class="card dash-card" data-card="color">
+              <h2 class="dash-card__title"><span class="dash-card__icon" aria-hidden="true">◎</span> Color</h2>
+              <div class="swatch-wrap">
+                <div id="colorSwatch" class="swatch" title="RGB escalado 0–255"></div>
+              </div>
+              <p class="hint">Muestra aproximada del RGB crudo.</p>
+            </div>
+            <div class="card dash-card" data-card="dist">
+              <h2 class="dash-card__title"><span class="dash-card__icon" aria-hidden="true">◇</span> Distancia</h2>
+              <div class="dist-block">
+                <div class="dist-val-row">
+                  <span id="distVal" class="dist-val__num">—</span>
+                  <span id="distUnit" class="dist-val__unit"></span>
+                </div>
+                <div class="dist-meter" aria-hidden="true">
+                  <div class="dist-meter__track">
+                    <div id="distGaugeFill" class="dist-meter__fill"></div>
+                  </div>
+                  <div class="dist-meter__labels"><span>0</span><span>cm</span><span>80</span></div>
+                </div>
+              </div>
+              <p class="hint">HC‑SR04 · 999 = sin eco</p>
+            </div>
+            <div class="card rgb-card dash-card" data-card="rgb">
+              <h2 class="dash-card__title"><span class="dash-card__icon" aria-hidden="true">▤</span> RGB + clear</h2>
+              <p id="rgbPct" class="hint rgb-pct-line rgb-pct-highlight"></p>
+              <div class="bars">
+                <div class="bar-row"><span>R</span><div class="track"><div id="barR" class="fill r"></div></div><span id="valR">—</span></div>
+                <div class="bar-row"><span>G</span><div class="track"><div id="barG" class="fill g"></div></div><span id="valG">—</span></div>
+                <div class="bar-row"><span>B</span><div class="track"><div id="barB" class="fill b"></div></div><span id="valB">—</span></div>
+                <div class="bar-row"><span>C</span><div class="track"><div id="barC" class="fill c"></div></div><span id="valC">—</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-hardware" class="umg-panel" role="tabpanel" hidden>
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Hardware · mapa de pines</h2>
+            <p class="umg-panelHead__sub">Declaración del firmware y sondeo I2C al instante (no es inspección física de cables).</p>
+          </header>
+          <div class="card hardware-section panel-card umg-card">
+            <div class="panel-card__head panel-card__head--inline">
+              <div>
+                <h3 class="panel-card__title">Mapa GPIO + bus</h3>
+                <p class="panel-card__sub">Coincide con el firmware cargado en el ESP32 conectado.</p>
+              </div>
+              <button type="button" id="btnHardware" class="secondary btn-compact">Cargar desde robot</button>
+            </div>
+            <p id="hwMsg" class="msg"></p>
+            <div id="hwNote" class="hw-note"></div>
+            <table class="hw-table" id="hwTable">
+              <thead><tr><th>GPIO</th><th>Función</th></tr></thead>
+              <tbody id="hwTableBody"></tbody>
+            </table>
+            <div id="hwI2c" class="hw-i2c"></div>
+            <details class="hw-details"><summary>Respuesta cruda HARDWARE</summary><pre id="hwRaw" class="hw-raw"></pre></details>
+          </div>
+        </section>
+
+        <section id="panel-diagnostics" class="umg-panel" role="tabpanel" hidden>
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Diagnóstico y trazas</h2>
+            <p class="umg-panelHead__sub">Para depuración de protocolo. Los PING aparecen también en «Conexión TCP» → registro desplegable.</p>
+          </header>
+          <div class="umg-diag-actions">
+            <button type="button" class="umg-quietBtn" id="jumpToSessionDiag">Ir a Conexión TCP (registro PING)</button>
+          </div>
+          <div class="card fold-raw umg-card umg-card--bare">
+            <details class="raw-details">
+              <summary class="fold-raw__summary">Último bloque <code>LEER</code> · TCP</summary>
+              <pre id="raw"></pre>
+            </details>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>

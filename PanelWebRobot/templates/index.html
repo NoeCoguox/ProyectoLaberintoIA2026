@@ -1,0 +1,1972 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Panel UMG · Robot laberinto ESP32</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,500;0,600;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400..800&family=Plus+Jakarta+Sans:ital,wght@0,400..700;1,400..700&family=Poppins:ital,wght@0,500;0,600;0,700;1,500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}" />
+  <script src="{{ url_for('static', filename='panel-theme-init.js') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel-theme.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='soft-ui-shell.css') }}" />
+</head>
+<body class="panel-app umg-app">
+  <div class="umg-bg" aria-hidden="true"></div>
+  <div class="umg-bg umg-bg--floor" aria-hidden="true"></div>
+  <div class="umg-vignette" aria-hidden="true"></div>
+  <div class="grain grain--umg" aria-hidden="true"></div>
+
+  <button type="button" class="umg-burger" id="umgBurger" aria-expanded="false" aria-controls="umgSidebar">
+    <span class="umg-burger__line"></span>
+    <span class="umg-burger__line"></span>
+    <span class="umg-burger__line"></span>
+    <span class="umg-sr-only">Abrir o cerrar menú</span>
+  </button>
+
+  <div class="umg-layout" id="umgLayout">
+    <aside class="umg-sidebar" id="umgSidebar" aria-label="Menú del panel">
+      <div class="umg-sidebar__brand">
+        <img class="umg-sidebar__logo" src="{{ url_for('static', filename='umg-seal.svg') }}" width="76" height="76" alt="Universidad Mariano Gálvez de Guatemala" />
+        <div class="umg-sidebar__brandText">
+          <span class="umg-sidebar__uni">Universidad Mariano Gálvez</span>
+          <span class="umg-sidebar__project">Proyecto integrador · Laberinto IA · ESP32</span>
+        </div>
+      </div>
+
+      <p class="umg-sidebar__sectionLabel">Menú dinámico</p>
+      <nav class="umg-nav" aria-label="Categorías del panel">
+        <details class="umg-navFold" open>
+          <summary class="umg-navFold__sum">
+            Vista general
+            <svg class="umg-navFold__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="umg-navFold__body">
+            <button type="button" class="umg-nav__btn is-active" role="tab" aria-selected="true" data-panel="overview">
+              <span class="umg-nav__ico" aria-hidden="true">
+                <svg class="umg-nav__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h7v7H4V5zm9 0h7v7h-7V5zM4 14h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg>
+              </span>
+              <span class="umg-nav__txt">Resumen</span>
+            </button>
+            <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="tools">
+              <span class="umg-nav__ico" aria-hidden="true">
+                <svg class="umg-nav__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.77 3.76z"/></svg>
+              </span>
+              <span class="umg-nav__txt">Herramientas</span>
+            </button>
+          </div>
+        </details>
+        <details class="umg-navFold" open>
+          <summary class="umg-navFold__sum">
+            Robot en vivo
+            <svg class="umg-navFold__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="umg-navFold__body">
+            <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="session">
+              <span class="umg-nav__ico" aria-hidden="true">
+                <svg class="umg-nav__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+              </span>
+              <span class="umg-nav__txt">Conexión TCP</span>
+            </button>
+            <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="servo">
+              <span class="umg-nav__ico" aria-hidden="true">
+                <svg class="umg-nav__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-6.219-8.56"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+              </span>
+              <span class="umg-nav__txt">Servo</span>
+            </button>
+            <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="telemetry">
+              <span class="umg-nav__ico" aria-hidden="true">
+                <svg class="umg-nav__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </span>
+              <span class="umg-nav__txt">Sensores</span>
+            </button>
+          </div>
+        </details>
+        <details class="umg-navFold" open>
+          <summary class="umg-navFold__sum">
+            Proyecto
+            <svg class="umg-navFold__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="umg-navFold__body">
+            <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="hardware">
+              <span class="umg-nav__ico" aria-hidden="true">
+                <svg class="umg-nav__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+              </span>
+              <span class="umg-nav__txt">Hardware</span>
+            </button>
+            <button type="button" class="umg-nav__btn" role="tab" aria-selected="false" data-panel="diagnostics">
+              <span class="umg-nav__ico" aria-hidden="true">
+                <svg class="umg-nav__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+              </span>
+              <span class="umg-nav__txt">Diagnóstico</span>
+            </button>
+          </div>
+        </details>
+      </nav>
+
+      <div class="umg-sidebar__footer">
+        <span class="umg-sidebar__chip">TCP 8888</span>
+        <p class="umg-sidebar__hint">Reemplazá <code>umg-seal.svg</code> por el logo oficial en <code>static/</code> si tenés el archivo en alta resolución.</p>
+      </div>
+    </aside>
+
+    <div class="umg-work">
+      <header class="umg-topbar">
+        <div class="umg-topbar__lead">
+          <h1 class="umg-topbar__title">Panel de telemetría del robot</h1>
+          <p class="umg-topbar__sub">Puente web Flask · firmware ESP32 · <strong>U. Mariano Gálvez · Guatemala</strong></p>
+        </div>
+        <div class="umg-topbar__chips">
+          <div class="umg-themeBar">
+            <label class="umg-themeBar__label" for="panelTheme">Paleta</label>
+            <select id="panelTheme" class="umg-themeSelect" title="Tema en todo el sitio (se guarda en el navegador)" aria-label="Paleta de colores">
+              <option value="soft">Prisma · soft morado (defecto)</option>
+              <option value="aurora">Aurora · violeta‑cian neón</option>
+              <option value="coral">Coral · rosa‑ámbar energía</option>
+              <option value="laguna">Laguna · turquesa</option>
+              <option value="paper">Papel · claro clásico</option>
+            </select>
+          </div>
+          <span id="dockWhoami" class="umg-chip umg-chip--pc" title="IP de esta máquina (vista servidor)">PC · —</span>
+          <span id="dockConnTarget" class="umg-chip umg-chip--robot" aria-live="polite">Robot · —</span>
+          <span id="liveIndicator" class="umg-chip umg-chip--pulse" hidden>En vivo</span>
+          <span id="lastUpdate" class="umg-chip umg-chip--time last-update is-neutral" title="Estado del último muestreo LEER"></span>
+        </div>
+      </header>
+
+      <div class="umg-panelHost">
+        <section id="panel-overview" class="umg-panel is-active" role="tabpanel">
+          <div class="umg-dashIntro">
+            <h2 class="umg-dashIntro__title">Tablero de entrada</h2>
+            <p class="umg-dashIntro__text">Este espacio agrupa lecturas recientes y atajos. Usá el menú izquierdo para trabajar por bloques: conexión, servo, sensores o diagnóstico.</p>
+          </div>
+          <div class="umg-kpiGrid">
+            <article class="umg-kpi">
+              <h3 class="umg-kpi__label">Celda (TCS34725)</h3>
+              <p id="kpiCelda" class="umg-kpi__value">—</p>
+            </article>
+            <article class="umg-kpi">
+              <h3 class="umg-kpi__label">Distancia ultrasónico</h3>
+              <p id="kpiDist" class="umg-kpi__value">—</p>
+            </article>
+            <article class="umg-kpi">
+              <h3 class="umg-kpi__label">Ángulo servo</h3>
+              <p id="kpiServo" class="umg-kpi__value">—</p>
+            </article>
+            <article class="umg-kpi">
+              <h3 class="umg-kpi__label">Último muestreo</h3>
+              <p id="kpiStamp" class="umg-kpi__value">—</p>
+            </article>
+          </div>
+          <div class="umg-hubGrid">
+            <button type="button" class="umg-hubCard" data-panel-jump="tools">
+              <span class="umg-hubCard__icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.77 3.76z"/></svg>
+              </span>
+              <span class="umg-hubCard__tag">01</span>
+              <span class="umg-hubCard__name">Herramientas</span>
+              <span class="umg-hubCard__desc">Editor de laberinto (tamaño configurable) y control manual del carrito</span>
+            </button>
+            <button type="button" class="umg-hubCard" data-panel-jump="session">
+              <span class="umg-hubCard__icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+              </span>
+              <span class="umg-hubCard__tag">02</span>
+              <span class="umg-hubCard__name">Conexión TCP</span>
+              <span class="umg-hubCard__desc">IP, puerto, LEER automático y prueba PING</span>
+            </button>
+            <button type="button" class="umg-hubCard" data-panel-jump="telemetry">
+              <span class="umg-hubCard__icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </span>
+              <span class="umg-hubCard__tag">03</span>
+              <span class="umg-hubCard__name">Tablero de sensores</span>
+              <span class="umg-hubCard__desc">Celdas de color, distancia y canales RGB en vivo</span>
+            </button>
+            <button type="button" class="umg-hubCard umg-hubCard--accent" data-panel-jump="diagnostics">
+              <span class="umg-hubCard__icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+              </span>
+              <span class="umg-hubCard__tag">04</span>
+              <span class="umg-hubCard__name">Diagnóstico</span>
+              <span class="umg-hubCard__desc">Tramas crudas y registro opcional</span>
+            </button>
+          </div>
+        </section>
+
+        <section id="panel-tools" class="umg-panel" role="tabpanel">
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Herramientas del proyecto</h2>
+            <p class="umg-panelHead__sub">Enlaces a pantallas dedicadas sin perder esta sesión en el navegador.</p>
+          </header>
+          <div class="umg-toolCards">
+            <a href="{{ url_for('mapa') }}" class="umg-toolCard umg-toolCard--blue">
+              <span class="umg-toolCard__visual" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M3 14h7v7H3z"/></svg>
+              </span>
+              <span class="umg-toolCard__copy">
+                <span class="umg-toolCard__eyebrow">Editor</span>
+                <span class="umg-toolCard__title">Laberinto físico (N×M)</span>
+                <span class="umg-toolCard__body">Caminos, paredes y punto meta (verde) · generás un mapa y lo afinás a mano.</span>
+                <span class="umg-toolCard__cta">Abrir editor →</span>
+              </span>
+            </a>
+            <a href="{{ url_for('manual') }}" class="umg-toolCard umg-toolCard--red">
+              <span class="umg-toolCard__visual" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7-11-7z"/></svg>
+              </span>
+              <span class="umg-toolCard__copy">
+                <span class="umg-toolCard__eyebrow">Actuadores</span>
+                <span class="umg-toolCard__title">Control manual del carrito</span>
+                <span class="umg-toolCard__body"><code>MOVER:*</code> y pruebas por llanta · cruceta en vista aparte.</span>
+                <span class="umg-toolCard__cta">Abrir control →</span>
+              </span>
+            </a>
+            <a href="{{ url_for('laberinto_fisico') }}" class="umg-toolCard umg-toolCard--pista">
+              <span class="umg-toolCard__visual" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+              </span>
+              <span class="umg-toolCard__copy">
+                <span class="umg-toolCard__eyebrow">Pista real</span>
+                <span class="umg-toolCard__title">Laberinto físico</span>
+                <span class="umg-toolCard__body">Grilla configurable (3–32) en vivo, 6 modos de agente, BFS / A* / DFS / Greedy, ultrasonido + color y export JSON.</span>
+                <span class="umg-toolCard__cta">Abrir módulo →</span>
+              </span>
+            </a>
+          </div>
+        </section>
+
+        <section id="panel-session" class="umg-panel" role="tabpanel">
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Sesión TCP con el ESP32</h2>
+            <p class="umg-panelHead__sub">EndPoint del robot en tu LAN. La IP debe coincidir con la del Monitor serie (115200 baud).</p>
+          </header>
+          <div class="card panel-card config config-card umg-card">
+            <div class="field-row field-row--split">
+              <div class="field-group field-group--grow">
+                <label for="host">IP del ESP32</label>
+                <input type="text" id="host" placeholder="192.168.x.x" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="field-group field-group--port">
+                <label for="port">Puerto TCP del ESP32</label>
+                <input type="number" id="port" value="8888" min="1" max="65535" aria-describedby="portEspHint" />
+              </div>
+            </div>
+            <p id="portEspHint" class="panel-card__sub" style="margin-top: 6px;">
+              Debe coincidir con el firmware: habitualmente <strong>8888</strong>.
+              Si en la barra del navegador ves <code>127.0.0.1:5050</code>, ese es solo el panel web en tu PC; no lo pongas aquí (si no tendrás <em>timeout</em>).
+            </p>
+            <div class="tool-row">
+              <button type="button" id="btnPing" class="secondary btn-compact">Ping TCP</button>
+              <button type="button" id="btnLeer" class="secondary btn-compact" title="Una lectura LEER">Forzar LEER</button>
+              <button type="button" id="btnRobotIp" class="secondary btn-compact" title="Comando STATUS">IP del robot</button>
+            </div>
+            <div class="conn-ip-banner conn-ip-banner--flat" aria-live="polite">
+              <div class="conn-row"><span class="conn-label">Destino</span> <code id="connTarget">—</code></div>
+              <div class="conn-row conn-row--muted"><span class="conn-label">Este equipo</span> <code id="whoamiIp">—</code></div>
+              <div id="robotStatusBanner" class="conn-row conn-row--ok" hidden>
+                <span class="conn-label">STATUS Wi‑Fi</span> <code id="robotStatusIp">—</code>
+                <span id="robotStatusRssi" class="conn-ip-banner__rssi"></span>
+              </div>
+            </div>
+            <div id="wifiDash" class="wifi-dash" hidden aria-live="polite">
+              <div class="wifi-dash__head">
+                <h3 class="wifi-dash__title">Intensidad de señal Wi‑Fi</h3>
+                <span id="wifiDashTime" class="wifi-dash__time">—</span>
+              </div>
+              <div class="wifi-dash__grid">
+                <div class="wifi-dash__main">
+                  <div class="wifi-dash__rssiRow">
+                    <span id="wifiRssiValue" class="wifi-dash__rssiNum">—</span>
+                    <span class="wifi-dash__rssiUnit">dBm</span>
+                  </div>
+                  <span id="wifiQualityPill" class="wifi-dash__pill wifi-dash__pill--muted">Sin medición</span>
+                  <p id="wifiScaleHint" class="wifi-dash__scaleHint">Escala orientativa: −90 (muy débil) · −70 · −50 (fuerte)</p>
+                  <div class="wifi-dash__meter" role="meter" aria-valuemin="-100" aria-valuemax="-30" aria-valuenow="" aria-labelledby="wifiQualityPill">
+                    <div id="wifiMeterFill" class="wifi-dash__meterFill wifi-dash__meterFill--na"></div>
+                  </div>
+                  <div class="wifi-dash__ticks" aria-hidden="true"><span>−90</span><span>−70</span><span>−50</span><span>−30</span></div>
+                </div>
+                <div class="wifi-dash__chart">
+                  <p class="wifi-dash__chartLabel">Historial (últimas lecturas STATUS)</p>
+                  <div id="wifiSpark" class="wifi-dash__spark" role="img" aria-label="Barras de historial RSSI"></div>
+                </div>
+              </div>
+              <p id="wifiDashHint" class="wifi-dash__foot hint"></p>
+            </div>
+            <p class="live-hint live-hint--tight">Conviene <strong>3&nbsp;s</strong> de intervalo si querés sincronizar con <code>SERVO_ANG</code> por USB.</p>
+            <div class="auto-controls auto-controls--stack">
+              <label class="check">
+                <input type="checkbox" id="auto" checked />
+                Actualización automática (<code>LEER</code>)
+              </label>
+              <div class="auto-inline">
+                <label class="auto-label" for="autoInterval">Cada</label>
+                <select id="autoInterval" aria-label="Intervalo de actualización">
+                  <option value="250">0,25 s</option>
+                  <option value="400">0,4 s</option>
+                  <option value="500">0,5 s</option>
+                  <option value="750">0,75 s</option>
+                  <option value="1000">1 s</option>
+                  <option value="2000">2 s</option>
+                  <option value="3000" selected>3 s</option>
+                </select>
+              </div>
+              <label class="check">
+                <input type="checkbox" id="pingTcp" />
+                Ping TCP en segundo plano (2 s)
+              </label>
+            </div>
+            <p id="connMsg" class="msg msg--card"></p>
+            <details class="fold-block">
+              <summary class="fold-block__summary">Registro PING → PONG</summary>
+              <p class="hint fold-block__hint">No es la lectura de sensores. ICMP en Windows: <code>ping -t IP</code>.</p>
+              <pre id="pingLog" class="ping-log"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section id="panel-servo" class="umg-panel" role="tabpanel">
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Servo del ultrasonido</h2>
+            <p class="umg-panelHead__sub">GPIO 4 · barrido configurado en firmware · lectura <code>SERVO_ANG:</code> en cada ciclo.</p>
+          </header>
+          <div class="card panel-card servo-panel umg-card" aria-labelledby="servoPanelTitle">
+            <h3 id="servoPanelTitle" class="visually-hidden">Control del servo SG90</h3>
+            <div class="servo-panel__row">
+              <div class="servo-angle-block">
+                <div class="servo-angle-readout">
+                  <span id="servoAngleDisplay" class="servo-angle-num">—</span>
+                  <span class="servo-angle-suffix">°</span>
+                </div>
+                <div class="servo-angle-meter" aria-hidden="true">
+                  <div class="servo-angle-meter__track">
+                    <div id="servoAngleFill" class="servo-angle-meter__fill"></div>
+                  </div>
+                  <div class="servo-angle-meter__ticks"><span>0</span><span>90</span><span>180</span></div>
+                </div>
+              </div>
+              <div class="servo-panel__controls">
+                <div class="servo-btn-row">
+                  <button type="button" id="btnServoSweepOn" class="secondary btn-compact">Barrido ON</button>
+                  <button type="button" id="btnServoSweepOff" class="secondary btn-compact">Barrido OFF</button>
+                </div>
+                <div class="servo-manual">
+                  <label class="servo-manual__label" for="servoDeg">Ángulo fijo <span id="servoDegLabel">90</span>°</label>
+                  <input type="range" id="servoDeg" min="0" max="180" value="90" step="1" />
+                  <button type="button" id="btnServoGo" class="secondary btn-compact">Aplicar ángulo</button>
+                  <p class="hint servo-manual__note">Equivale al comando <code>SERVO:</code>. Reactivás barrido con «Barrido ON».</p>
+                </div>
+                <p id="servoMsg" class="msg servo-msg"></p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-telemetry" class="umg-panel" role="tabpanel">
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Sensores · tablero en vivo</h2>
+            <p class="umg-panelHead__sub">Vista tipo dashboard sobre la última trama válida que devuelve el ESP32 tras <code>LEER</code>.</p>
+          </header>
+          <p id="sensorBanner" class="sensor-banner" hidden></p>
+          <div id="dashGrid" class="grid-dashboard grid-dashboard--main grid-dashboard--umg">
+            <div class="card celda-box dash-card" data-card="celda">
+              <h2 class="dash-card__title"><span class="dash-card__icon" aria-hidden="true">◆</span> Celda</h2>
+              <div id="celdaBadge" class="badge UNKNOWN">—</div>
+              <p class="hint">Clasificación TCS34725: solo ROJO, VERDE o AZUL (proporciones R/G/B y clear C; sin BLANCO en firmware actual).</p>
+              <p id="threshLine" class="hint thresh-hint" hidden></p>
+            </div>
+            <div class="card dash-card" data-card="color">
+              <h2 class="dash-card__title"><span class="dash-card__icon" aria-hidden="true">◎</span> Color</h2>
+              <div class="swatch-wrap">
+                <div id="colorSwatch" class="swatch" title="Vista previa del matiz (RGB crudo normalizado)"></div>
+              </div>
+              <p class="hint">Vista previa del <strong>matiz</strong>: los valores del sensor suelen ser bajos frente a 16&nbsp;bits, así que escalamos cada canal dividiendo por el mayor de R/G/B (el bruto sigue abajo en «RGB + clear»).</p>
+            </div>
+            <div class="card dash-card" data-card="dist">
+              <h2 class="dash-card__title"><span class="dash-card__icon" aria-hidden="true">◇</span> Distancia</h2>
+              <div class="dist-block">
+                <div class="dist-val-row">
+                  <span id="distVal" class="dist-val__num">—</span>
+                  <span id="distUnit" class="dist-val__unit"></span>
+                </div>
+                <div class="dist-meter" aria-hidden="true">
+                  <div class="dist-meter__track">
+                    <div id="distGaugeFill" class="dist-meter__fill"></div>
+                  </div>
+                  <div class="dist-meter__labels"><span>0</span><span>cm</span><span>80</span></div>
+                </div>
+              </div>
+              <p class="hint">HC‑SR04 · 999 = sin eco</p>
+            </div>
+            <div class="card rgb-card dash-card" data-card="rgb">
+              <h2 class="dash-card__title"><span class="dash-card__icon" aria-hidden="true">▤</span> RGB + clear</h2>
+              <p id="rgbPct" class="hint rgb-pct-line rgb-pct-highlight"></p>
+              <div class="bars">
+                <div class="bar-row"><span>R</span><div class="track"><div id="barR" class="fill r"></div></div><span id="valR">—</span></div>
+                <div class="bar-row"><span>G</span><div class="track"><div id="barG" class="fill g"></div></div><span id="valG">—</span></div>
+                <div class="bar-row"><span>B</span><div class="track"><div id="barB" class="fill b"></div></div><span id="valB">—</span></div>
+                <div class="bar-row"><span>C</span><div class="track"><div id="barC" class="fill c"></div></div><span id="valC">—</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-hardware" class="umg-panel" role="tabpanel">
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Hardware · tester integrado</h2>
+            <p class="umg-panelHead__sub">
+              Estado del bus I2C, subsistemas y mapa GPIO en <strong>una sola vista</strong>. Basado en el comando TCP <code>HARDWARE</code> (no mide físicamente cada pin).
+            </p>
+          </header>
+          <div class="card hardware-section hw-tester panel-card umg-card">
+            <div class="hw-tester__masthead">
+              <div class="hw-tester__lead">
+                <h3 class="panel-card__title">Tester en tiempo real</h3>
+                <p class="panel-card__sub">Activá el monitor para repetir la consulta sólo en esta pestaña; no interfiere con <code>LEER</code> desde otras vistas.</p>
+              </div>
+              <div class="hw-tester__controls">
+                <label class="hw-tester__live">
+                  <input type="checkbox" id="hwLive" checked />
+                  <span>Monitor en vivo</span>
+                </label>
+                <select id="hwLiveMs" class="hw-tester__interval" aria-label="Intervalo del monitor hardware">
+                  <option value="2000">Cada 2 s</option>
+                  <option value="4000" selected>Cada 4 s</option>
+                  <option value="6000">Cada 6 s</option>
+                  <option value="10000">Cada 10 s</option>
+                </select>
+                <button type="button" id="btnHardware" class="secondary btn-compact hw-tester__btn">Actualizar ya</button>
+              </div>
+            </div>
+            <div id="hwLiveBar" class="hw-livebar hw-livebar--idle" aria-live="polite">
+              <span id="hwLiveDot" class="hw-livebar__dot"></span>
+              <span id="hwLiveTxt" class="hw-livebar__txt">Indicá la IP del ESP32 (pestaña Conexión TCP) y pulsá Actualizar o activá el monitor.</span>
+              <time id="hwLastAt" class="hw-livebar__time" datetime="">—</time>
+            </div>
+
+            <div id="hwDiag" class="hw-diag hw-diag--embed">
+              <div id="hwDiagUnified" class="hw-diag-unified">
+                <div class="hw-diag-unified__main">
+                  <div id="hwDiagSummary" class="hw-diag__summary hw-diag__summary--neutral" role="status"></div>
+                  <div id="hwDiagGrid" class="hw-diag__grid"></div>
+                </div>
+                <aside class="hw-diag-unified__pins" aria-label="Mapa de pines">
+                  <h4 class="hw-pins__title">Mapa GPIO declarado</h4>
+                  <p id="hwNote" class="hw-pins__hint"></p>
+                  <div class="hw-pins__scroll">
+                    <table class="hw-table hw-table--embed">
+                      <thead><tr><th>GPIO</th><th>Función</th></tr></thead>
+                      <tbody id="hwTableBody"></tbody>
+                    </table>
+                  </div>
+                </aside>
+              </div>
+              <details class="hw-details hw-details--tuck">
+                <summary>Respuesta cruda HARDWARE (avanzado)</summary>
+                <pre id="hwRaw" class="hw-raw"></pre>
+              </details>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-diagnostics" class="umg-panel" role="tabpanel">
+          <header class="umg-panelHead">
+            <h2 class="umg-panelHead__title">Diagnóstico y trazas</h2>
+            <p class="umg-panelHead__sub">Para depuración de protocolo. Los PING aparecen también en «Conexión TCP» → registro desplegable.</p>
+          </header>
+          <div class="umg-diag-actions">
+            <button type="button" class="umg-quietBtn" id="jumpToSessionDiag">Ir a Conexión TCP (registro PING)</button>
+          </div>
+          <div class="card fold-raw umg-card umg-card--bare">
+            <details class="raw-details">
+              <summary class="fold-raw__summary">Último bloque <code>LEER</code> · TCP</summary>
+              <pre id="raw"></pre>
+            </details>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+
+  <script>
+    const MAX16 = 65535;
+    const hostEl = document.getElementById("host");
+    const portEl = document.getElementById("port");
+    const msgEl = document.getElementById("connMsg");
+    const rawEl = document.getElementById("raw");
+    const celdaBadge = document.getElementById("celdaBadge");
+    const distVal = document.getElementById("distVal");
+    const distUnit = document.getElementById("distUnit");
+    const distGaugeFill = document.getElementById("distGaugeFill");
+    const dashGrid = document.getElementById("dashGrid");
+    const swatchEl = document.getElementById("colorSwatch");
+    const sensorBanner = document.getElementById("sensorBanner");
+    const threshLine = document.getElementById("threshLine");
+    const liveIndicator = document.getElementById("liveIndicator");
+    const lastUpdateEl = document.getElementById("lastUpdate");
+    const connTargetEl = document.getElementById("connTarget");
+    const whoamiIpEl = document.getElementById("whoamiIp");
+    const robotStatusBanner = document.getElementById("robotStatusBanner");
+    const robotStatusIp = document.getElementById("robotStatusIp");
+    const robotStatusRssi = document.getElementById("robotStatusRssi");
+    const wifiDashEl = document.getElementById("wifiDash");
+    const WIFI_RSSI_HIST_MAX = 40;
+    /** @type {(number|null)[]} */
+    let wifiRssiHistory = [];
+    let wifiQuietInFlight = false;
+
+    const dockConnTargetEl = document.getElementById("dockConnTarget");
+    const dockWhoamiEl = document.getElementById("dockWhoami");
+
+    function setLastUpdateChip(text, kind) {
+      if (!lastUpdateEl) return;
+      lastUpdateEl.textContent = text || "—";
+      lastUpdateEl.classList.remove("is-success", "is-danger", "is-neutral");
+      if (kind === "ok") lastUpdateEl.classList.add("is-success");
+      else if (kind === "err") lastUpdateEl.classList.add("is-danger");
+      else lastUpdateEl.classList.add("is-neutral");
+    }
+
+    function syncConnTarget() {
+      if (!connTargetEl) return;
+      const h = hostEl.value.trim();
+      const p = parseInt(portEl.value, 10) || 8888;
+      const line = h ? h + ":" + p : "— (escribe la IP del ESP32)";
+      connTargetEl.textContent = line;
+      if (dockConnTargetEl) {
+        dockConnTargetEl.textContent = h ? "Robot · " + h + ":" + p : "Robot · sin IP";
+        dockConnTargetEl.classList.toggle("umg-chip--robot-on", !!h);
+      }
+    }
+
+    async function fetchWhoami() {
+      if (!whoamiIpEl) return;
+      try {
+        const res = await fetch("/api/whoami");
+        const j = await res.json();
+        const wip = j.ok && j.client_ip ? j.client_ip : "—";
+        whoamiIpEl.textContent = wip;
+        if (dockWhoamiEl) dockWhoamiEl.textContent = "PC · " + wip;
+      } catch (e) {
+        whoamiIpEl.textContent = "—";
+        if (dockWhoamiEl) dockWhoamiEl.textContent = "PC · —";
+      }
+    }
+
+    function wifiClampPct(x) {
+      return Math.min(100, Math.max(0, x));
+    }
+
+    /** ~−92 dBm → 0%, ~−38 dBm → 100% */
+    function wifiRssiToPct(rssi) {
+      const lo = -92;
+      const hi = -38;
+      return wifiClampPct(Math.round(((rssi - lo) / (hi - lo)) * 100));
+    }
+
+    /**
+     * @param {number} rssi
+     * @returns objeto con strings label, pillClass, fillClass
+     */
+    function wifiQualityFromRssi(rssi) {
+      const p = wifiRssiToPct(rssi);
+      if (p >= 78)
+        return { label: "Excelente", pillClass: "wifi-dash__pill--ex", fillClass: "wifi-dash__meterFill--ex" };
+      if (p >= 58)
+        return { label: "Buena", pillClass: "wifi-dash__pill--good", fillClass: "wifi-dash__meterFill--good" };
+      if (p >= 38)
+        return { label: "Aceptable", pillClass: "wifi-dash__pill--ok", fillClass: "wifi-dash__meterFill--ok" };
+      if (p >= 18)
+        return { label: "Débil", pillClass: "wifi-dash__pill--weak", fillClass: "wifi-dash__meterFill--weak" };
+      return { label: "Crítico", pillClass: "wifi-dash__pill--bad", fillClass: "wifi-dash__meterFill--bad" };
+    }
+
+    function wifiPushHistory(rssi) {
+      wifiRssiHistory.push(rssi == null || rssi === "" ? null : Number(rssi));
+      while (wifiRssiHistory.length > WIFI_RSSI_HIST_MAX) wifiRssiHistory.shift();
+    }
+
+    function renderWifiSparklines() {
+      const spark = document.getElementById("wifiSpark");
+      if (!spark) return;
+      const hMax = Math.max(52, spark.clientHeight - 18);
+      spark.innerHTML = "";
+      wifiRssiHistory.forEach(function (v) {
+        const bar = document.createElement("span");
+        bar.className = "wifi-dash__bar";
+        if (v == null || Number.isNaN(Number(v))) {
+          bar.classList.add("wifi-dash__bar--na");
+          bar.style.height = "10px";
+          bar.title = "—";
+        } else {
+          const n = Number(v);
+          const px = Math.max(12, Math.round((wifiRssiToPct(n) / 100) * hMax));
+          bar.style.height = px + "px";
+          bar.title = n + " dBm";
+          const q = wifiQualityFromRssi(n);
+          if (q.fillClass === "wifi-dash__meterFill--ex") bar.classList.add("wifi-dash__bar--ex");
+          else if (q.fillClass === "wifi-dash__meterFill--good") bar.classList.add("wifi-dash__bar--good");
+          else if (q.fillClass === "wifi-dash__meterFill--ok") bar.classList.add("wifi-dash__bar--ok");
+          else if (q.fillClass === "wifi-dash__meterFill--weak") bar.classList.add("wifi-dash__bar--weak");
+          else bar.classList.add("wifi-dash__bar--bad");
+        }
+        spark.appendChild(bar);
+      });
+    }
+
+    function renderWifiDashboard(rssiRaw) {
+      const timeEl = document.getElementById("wifiDashTime");
+      const valEl = document.getElementById("wifiRssiValue");
+      const fill = document.getElementById("wifiMeterFill");
+      const pill = document.getElementById("wifiQualityPill");
+      const meterEl = document.querySelector(".wifi-dash__meter");
+      const hintFoot = document.getElementById("wifiDashHint");
+      if (!valEl || !fill || !pill || !timeEl) return;
+      timeEl.textContent = "Actualizado " + new Date().toLocaleTimeString();
+      if (hintFoot) {
+        hintFoot.textContent =
+          "RSSI desde STATUS en el firmware. Con actualización LEER activa se vuelve a pedir tras cada ciclo válido.";
+      }
+
+      let rssi = null;
+      if (rssiRaw != null && rssiRaw !== "" && !Number.isNaN(Number(rssiRaw))) rssi = Number(rssiRaw);
+
+      if (rssi != null) {
+        valEl.textContent = String(rssi);
+        const q = wifiQualityFromRssi(rssi);
+        const pct = wifiRssiToPct(rssi);
+        pill.textContent = q.label + " (~" + pct + "%)";
+        pill.className = "wifi-dash__pill " + q.pillClass;
+        fill.style.width = pct + "%";
+        fill.className = "wifi-dash__meterFill " + q.fillClass;
+        if (meterEl) {
+          meterEl.setAttribute("aria-valuenow", String(rssi));
+          meterEl.setAttribute("aria-valuetext", rssi + " dBm · " + q.label);
+        }
+      } else {
+        valEl.textContent = "—";
+        pill.textContent = "Sin RSSI en STATUS";
+        pill.className = "wifi-dash__pill wifi-dash__pill--muted";
+        fill.style.width = "0%";
+        fill.className = "wifi-dash__meterFill wifi-dash__meterFill--na";
+        if (meterEl) {
+          meterEl.removeAttribute("aria-valuenow");
+          meterEl.setAttribute("aria-valuetext", "Sin dato RSSI");
+        }
+      }
+      wifiPushHistory(rssi);
+      renderWifiSparklines();
+    }
+
+    /** @param {any} j @param {any} [opts] opciones, p. ej. quiet */
+    function applyWifiStatusPayload(j, opts) {
+      const quiet = opts && opts.quiet;
+      if (!robotStatusBanner || !robotStatusIp) return;
+      if (!j.ok) {
+        if (!quiet) {
+          msgEl.textContent = j.error || "Error STATUS";
+          msgEl.className = "msg err";
+          robotStatusBanner.hidden = true;
+          if (wifiDashEl) wifiDashEl.hidden = true;
+        }
+        return;
+      }
+      if (!quiet) {
+        msgEl.textContent = "STATUS recibido — esa es la IP del ESP32 en la red Wi‑Fi.";
+        msgEl.className = "msg ok";
+      }
+      robotStatusIp.textContent = j.robot_ip || "—";
+      if (robotStatusRssi)
+        robotStatusRssi.textContent = j.rssi != null && j.rssi !== "" ? " · RSSI " + j.rssi + " dBm" : "";
+      robotStatusBanner.hidden = false;
+      if (wifiDashEl) wifiDashEl.hidden = false;
+      renderWifiDashboard(j.rssi);
+    }
+
+    async function fetchRobotStatus() {
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      if (!robotStatusBanner || !robotStatusIp) return;
+      if (!host) {
+        msgEl.textContent = "Escribe la IP del ESP32 para pedir STATUS.";
+        msgEl.className = "msg err";
+        return;
+      }
+      savePrefs();
+      msgEl.textContent = "Pidiendo STATUS al robot…";
+      msgEl.className = "msg";
+      try {
+        const res = await fetch("/api/status?host=" + encodeURIComponent(host) + "&port=" + port);
+        const j = await res.json();
+        applyWifiStatusPayload(j, { quiet: false });
+      } catch (e) {
+        msgEl.textContent = String(e);
+        msgEl.className = "msg err";
+        robotStatusBanner.hidden = true;
+        if (wifiDashEl) wifiDashEl.hidden = true;
+      }
+    }
+
+    function resetWifiUi() {
+      wifiRssiHistory.length = 0;
+      const spark = document.getElementById("wifiSpark");
+      if (spark) spark.innerHTML = "";
+      if (wifiDashEl) wifiDashEl.hidden = true;
+      const fill = document.getElementById("wifiMeterFill");
+      const pill = document.getElementById("wifiQualityPill");
+      const valEl = document.getElementById("wifiRssiValue");
+      const timeEl = document.getElementById("wifiDashTime");
+      if (valEl) valEl.textContent = "—";
+      if (pill) {
+        pill.textContent = "Sin medición";
+        pill.className = "wifi-dash__pill wifi-dash__pill--muted";
+      }
+      if (fill) {
+        fill.style.width = "0%";
+        fill.className = "wifi-dash__meterFill wifi-dash__meterFill--na";
+      }
+      if (timeEl) timeEl.textContent = "—";
+    }
+
+    async function refreshWifiDashboardQuiet() {
+      if (wifiQuietInFlight) return;
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      if (!host || !wifiDashEl) return;
+      wifiQuietInFlight = true;
+      try {
+        const res = await fetch("/api/status?host=" + encodeURIComponent(host) + "&port=" + port);
+        const j = await res.json();
+        applyWifiStatusPayload(j, { quiet: true });
+      } catch (_) {
+        /* Mantener última lectura en UI */
+      } finally {
+        wifiQuietInFlight = false;
+      }
+    }
+
+    function updateSensorBanner(j) {
+      if (j.sensor_ok === true || (j.r != null && j.g != null && j.b != null)) {
+        sensorBanner.hidden = true;
+        sensorBanner.textContent = "";
+        return;
+      }
+      if (j.sensor_ok === false) {
+        sensorBanner.hidden = false;
+        sensorBanner.className = "sensor-banner err";
+        if (j.celda === "SKIP") {
+          sensorBanner.textContent =
+            "SENSOR:SKIP (respuesta antigua o excepcional): el firmware actual lee color sin depender del ultrasonido.";
+        } else {
+          sensorBanner.textContent =
+            "Sensor de color no detectado (SENSOR:OFF). Revisa I2C SDA→GPIO21, SCL→GPIO22, 3V3 y GND.";
+        }
+        return;
+      }
+      sensorBanner.hidden = false;
+      sensorBanner.className = "sensor-banner warn";
+      sensorBanner.textContent =
+        "No se detectó línea SENSOR en la respuesta. Comprueba el firmware y la conexión TCP.";
+    }
+
+    /** v2: por defecto siempre en vivo; la clave antigua robotPanelAuto a veces dejaba todo apagado */
+    const LS_LIVE = "robotPanelLiveV2";
+    const LS_HW_MON = "robotHwMonitorLive";
+    const LS_HW_MS = "robotHwMonitorMs";
+
+    function savePrefs() {
+      try {
+        localStorage.setItem("robotPanelHost", hostEl.value.trim());
+        localStorage.setItem("robotPanelPort", String(parseInt(portEl.value, 10) || 8888));
+        localStorage.setItem(LS_LIVE, document.getElementById("auto").checked ? "1" : "0");
+        localStorage.setItem("robotPanelPingTcp", document.getElementById("pingTcp").checked ? "1" : "0");
+        localStorage.setItem("robotPanelAutoMs", document.getElementById("autoInterval").value || "3000");
+        const hwL = document.getElementById("hwLive");
+        const hwM = document.getElementById("hwLiveMs");
+        if (hwL) localStorage.setItem(LS_HW_MON, hwL.checked ? "1" : "0");
+        if (hwM) localStorage.setItem(LS_HW_MS, hwM.value || "4000");
+      } catch (_) {}
+    }
+
+    function loadPrefs() {
+      try {
+        const h = localStorage.getItem("robotPanelHost");
+        const p = localStorage.getItem("robotPanelPort");
+        if (h) hostEl.value = h;
+        if (p) portEl.value = p;
+        try {
+          localStorage.removeItem("robotPanelAuto");
+        } catch (_) {}
+        const live = localStorage.getItem(LS_LIVE);
+        if (live === "0") {
+          document.getElementById("auto").checked = false;
+        } else {
+          document.getElementById("auto").checked = true;
+        }
+        if (localStorage.getItem("robotPanelPingTcp") === "1") {
+          document.getElementById("pingTcp").checked = true;
+        }
+        const ms = localStorage.getItem("robotPanelAutoMs");
+        if (ms) {
+          const sel = document.getElementById("autoInterval");
+          if ([...sel.options].some((o) => o.value === ms)) sel.value = ms;
+        }
+        const hwL = document.getElementById("hwLive");
+        const hwM = document.getElementById("hwLiveMs");
+        if (hwL) hwL.checked = localStorage.getItem(LS_HW_MON) !== "0";
+        const hms = localStorage.getItem(LS_HW_MS);
+        if (hwM && hms && [...hwM.options].some((o) => o.value === hms)) hwM.value = hms;
+      } catch (_) {}
+      const q = new URLSearchParams(window.location.search);
+      if (q.get("host")) hostEl.value = q.get("host");
+      if (q.get("port")) portEl.value = q.get("port");
+      if (q.get("live") === "0") document.getElementById("auto").checked = false;
+      if (q.get("live") === "1") document.getElementById("auto").checked = true;
+    }
+
+    function pct(v) {
+      if (v == null || v === undefined) return 0;
+      return Math.min(100, Math.round((v / MAX16) * 100));
+    }
+
+    function rawTo255(x) {
+      if (x == null || x === undefined) return 0;
+      return Math.min(255, Math.max(0, Math.round((Number(x) / MAX16) * 255)));
+    }
+
+    /** Matiz visible: el firmware envía valores 16‑bit muy por debajo de 65535; escalar sólo por máx(R,G,B) evita preview casi negro. */
+    function rawRgbToSwatch255(r, g, b) {
+      const rn = Math.max(0, Number(r));
+      const gn = Math.max(0, Number(g));
+      const bn = Math.max(0, Number(b));
+      if (!Number.isFinite(rn) || !Number.isFinite(gn) || !Number.isFinite(bn)) return [0, 0, 0];
+      const mx = Math.max(rn, gn, bn, 1);
+      return [
+        Math.min(255, Math.max(0, Math.round((rn / mx) * 255))),
+        Math.min(255, Math.max(0, Math.round((gn / mx) * 255))),
+        Math.min(255, Math.max(0, Math.round((bn / mx) * 255))),
+      ];
+    }
+
+    function setSwatch(r, g, b) {
+      if (!swatchEl) return;
+      if (r == null || g == null || b == null) {
+        swatchEl.classList.remove("swatch--filled");
+        var emptyCss = (getComputedStyle(document.documentElement).getPropertyValue("--swatch-empty") || "").trim();
+        swatchEl.style.background = emptyCss || "linear-gradient(145deg, #1a222e, #0d1117)";
+        swatchEl.style.boxShadow = "inset 0 0 0 1px rgba(255,255,255,0.06)";
+        swatchEl.title = "Sin datos RGB";
+        return;
+      }
+      swatchEl.classList.add("swatch--filled");
+      const parts = rawRgbToSwatch255(r, g, b);
+      var R = parts[0],
+        G = parts[1],
+        B = parts[2];
+      swatchEl.style.background = "rgb(" + R + "," + G + "," + B + ")";
+      swatchEl.style.boxShadow =
+        "0 0 0 1px rgba(255,255,255,0.14), 0 12px 40px rgba(" +
+        R +
+        "," +
+        G +
+        "," +
+        B +
+        ",0.32), inset 0 1px 0 rgba(255,255,255,0.2)";
+      swatchEl.title =
+        "Vista previa rgb(" +
+        R +
+        "," +
+        G +
+        "," +
+        B +
+        ") · crudo 16‑bit ~" +
+        r +
+        ", " +
+        g +
+        ", " +
+        b;
+    }
+
+    /** Escala visual 0–80 cm (100% = lejos en la barra); 999 → vacío */
+    function setDistGauge(distCm) {
+      if (!distGaugeFill) return;
+      if (distCm == null || distCm >= 999) {
+        distGaugeFill.style.width = "0%";
+        distGaugeFill.classList.add("is-empty");
+        return;
+      }
+      distGaugeFill.classList.remove("is-empty");
+      const pct = Math.min(100, (Number(distCm) / 80) * 100);
+      distGaugeFill.style.width = pct + "%";
+    }
+
+    function flashDashboard() {
+      if (!dashGrid) return;
+      dashGrid.classList.remove("just-updated");
+      void dashGrid.offsetWidth;
+      dashGrid.classList.add("just-updated");
+    }
+
+    let lastServoAngle = null;
+
+    const UMG_LS_PANEL = "robotUmgPanel";
+    const UMG_PANEL_IDS = ["overview", "tools", "session", "servo", "telemetry", "hardware", "diagnostics"];
+
+    function showUmgPanel(panelId) {
+      const id = UMG_PANEL_IDS.includes(panelId) ? panelId : "overview";
+      document.querySelectorAll(".umg-panel").forEach((p) => {
+        p.classList.toggle("is-active", p.id === "panel-" + id);
+      });
+      document.querySelectorAll(".umg-nav__btn[data-panel]").forEach((btn) => {
+        const is = btn.getAttribute("data-panel") === id;
+        btn.classList.toggle("is-active", is);
+        btn.setAttribute("aria-selected", is ? "true" : "false");
+      });
+      try {
+        localStorage.setItem(UMG_LS_PANEL, id);
+      } catch (_) {}
+      refreshHwMonitorState();
+    }
+
+    let hwMonitorTimer = null;
+    let hwPollInFlight = false;
+    /** Último resultado del tester: idle | ok | warn | bad */
+    let lastHwHealth = "idle";
+
+    function touchHwClock() {
+      const el = document.getElementById("hwLastAt");
+      if (!el) return;
+      const d = new Date();
+      try {
+        el.dateTime = d.toISOString();
+      } catch (_) {}
+      el.textContent = d.toLocaleTimeString();
+    }
+
+    function syncHwPinsTable(j, netErr) {
+      const tbody = document.getElementById("hwTableBody");
+      const hwNote = document.getElementById("hwNote");
+      const hwRaw = document.getElementById("hwRaw");
+      if (!tbody) return;
+      tbody.innerHTML = "";
+      if (hwNote) hwNote.textContent = "";
+      if (hwRaw) {
+        if (j && j.raw_lines && j.raw_lines.length) hwRaw.textContent = j.raw_lines.join("\n");
+        else if (j && typeof j.raw_lines === "object" && j.raw_lines !== null && !j.raw_lines.length) hwRaw.textContent = "// (vacío)";
+        else if (!j && netErr) hwRaw.textContent = "// " + netErr;
+        else if (j && !j.ok && j.raw_lines) hwRaw.textContent = j.raw_lines.join("\n") || "// error";
+        else hwRaw.textContent = "";
+      }
+      function rowMsg(txt) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 2;
+        td.className = "hw-table-msg";
+        td.textContent = txt;
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      }
+      if (netErr && !j) {
+        rowMsg(netErr);
+        return;
+      }
+      if (!j) {
+        rowMsg("Sin datos. Solicitá el tester con Actualizar ya o esperá el monitor.");
+        return;
+      }
+      if (!j.ok) {
+        rowMsg(j.error ? String(j.error) : "Fallo HARDWARE");
+        return;
+      }
+      if (j.note && hwNote) hwNote.textContent = j.note;
+      const pins = (j.pins || []).slice();
+      pins.sort(function (a, b) {
+        return a.gpio - b.gpio;
+      });
+      if (!pins.length) {
+        rowMsg("Sin líneas PIN: en esta trama.");
+        return;
+      }
+      pins.forEach(function (row) {
+        const tr = document.createElement("tr");
+        const td1 = document.createElement("td");
+        td1.textContent = String(row.gpio);
+        const td2 = document.createElement("td");
+        td2.textContent = String(row.label || "");
+        tr.appendChild(td1);
+        tr.appendChild(td2);
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateHwLiveStrip() {
+      const bar = document.getElementById("hwLiveBar");
+      const txt = document.getElementById("hwLiveTxt");
+      const dot = document.getElementById("hwLiveDot");
+      if (!bar || !txt || !dot) return;
+      const host = hostEl.value.trim();
+      const panelHw = !!(document.getElementById("panel-hardware") && document.getElementById("panel-hardware").classList.contains("is-active"));
+      const hwL = document.getElementById("hwLive");
+      const monitoring = !!(hwL && hwL.checked && hwMonitorTimer && panelHw);
+      bar.classList.remove("hw-livebar--idle", "hw-livebar--on", "hw-livebar--bad", "hw-livebar--warn", "hw-livebar--good");
+      dot.classList.remove("hw-livebar__dot--pulse");
+      function tintByHealth() {
+        if (lastHwHealth === "bad") bar.classList.add("hw-livebar--bad");
+        else if (lastHwHealth === "warn") bar.classList.add("hw-livebar--warn");
+        else if (lastHwHealth === "ok") bar.classList.add("hw-livebar--good");
+      }
+      if (!host) {
+        bar.classList.add("hw-livebar--idle");
+        txt.textContent = "Sin IP del robot — cargala en Conexión TCP.";
+        return;
+      }
+      let ivTxt = "";
+      try {
+        const s = document.getElementById("hwLiveMs");
+        if (s) ivTxt = " Ciclo cada " + (parseInt(s.value, 10) / 1000) + " s.";
+      } catch (_) {}
+      if (monitoring) {
+        bar.classList.add("hw-livebar--on");
+        dot.classList.add("hw-livebar__dot--pulse");
+        tintByHealth();
+        txt.textContent = "Tiempo real (sólo con esta pestaña visible)." + ivTxt;
+        return;
+      }
+      bar.classList.add("hw-livebar--idle");
+      tintByHealth();
+      if (panelHw) txt.textContent = "Monitor en pausa — «Actualizar ya» fuerza una lectura." + ivTxt;
+      else txt.textContent = "Abrí esta pestaña para ejecutar automáticas o llevar el estado al vuelo." + ivTxt;
+    }
+
+    function stopHwMonitor() {
+      if (hwMonitorTimer) {
+        clearInterval(hwMonitorTimer);
+        hwMonitorTimer = null;
+      }
+      updateHwLiveStrip();
+    }
+
+    function startHwMonitor() {
+      stopHwMonitor();
+      const hwL = document.getElementById("hwLive");
+      const hwPanel = document.getElementById("panel-hardware");
+      if (!hwL || !hwL.checked || !hostEl.value.trim()) return;
+      if (!hwPanel || !hwPanel.classList.contains("is-active")) return;
+      const ms = parseInt(document.getElementById("hwLiveMs") && document.getElementById("hwLiveMs").value, 10) || 4000;
+      hwMonitorTimer = setInterval(function () {
+        if (document.visibilityState !== "visible") return;
+        loadHardware({ silent: true });
+      }, ms);
+      updateHwLiveStrip();
+      loadHardware({ silent: true });
+    }
+
+    function refreshHwMonitorState() {
+      const hwPanel = document.getElementById("panel-hardware");
+      const hwL = document.getElementById("hwLive");
+      if (!hwPanel || !hwPanel.classList.contains("is-active")) {
+        stopHwMonitor();
+      } else if (hwL && hwL.checked && hostEl.value.trim()) {
+        startHwMonitor();
+      } else {
+        stopHwMonitor();
+      }
+    }
+
+    function initUmgShell() {
+      const layout = document.getElementById("umgLayout");
+      const burger = document.getElementById("umgBurger");
+      const themeSel = document.getElementById("panelTheme");
+      if (themeSel) {
+        try {
+          var LEG = { ion: "aurora", ember: "coral", aqua: "laguna" };
+          var savedT = localStorage.getItem("umgPanelTheme") || "aurora";
+          if (LEG[savedT]) {
+            savedT = LEG[savedT];
+            localStorage.setItem("umgPanelTheme", savedT);
+          }
+          if ([...themeSel.options].some(function (o) { return o.value === savedT; })) themeSel.value = savedT;
+          else themeSel.value = "soft";
+        } catch (e2) {
+          themeSel.value = "soft";
+        }
+        themeSel.addEventListener("change", function () {
+          var v = themeSel.value;
+          try {
+            localStorage.setItem("umgPanelTheme", v);
+          } catch (e3) {}
+          document.documentElement.setAttribute("data-theme", v);
+        });
+      }
+      document.querySelectorAll(".umg-nav__btn[data-panel]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          showUmgPanel(btn.getAttribute("data-panel"));
+          if (window.matchMedia("(max-width: 900px)").matches && layout) {
+            layout.classList.remove("umg-layout--nav-open");
+            if (burger) burger.setAttribute("aria-expanded", "false");
+          }
+        });
+      });
+      document.querySelectorAll("[data-panel-jump]").forEach((el) => {
+        el.addEventListener("click", () => showUmgPanel(el.getAttribute("data-panel-jump")));
+      });
+      const jumpDiag = document.getElementById("jumpToSessionDiag");
+      if (jumpDiag) {
+        jumpDiag.addEventListener("click", () => showUmgPanel("session"));
+      }
+      if (burger && layout) {
+        burger.addEventListener("click", () => {
+          const open = layout.classList.toggle("umg-layout--nav-open");
+          burger.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+        layout.addEventListener("click", (e) => {
+          if (!layout.classList.contains("umg-layout--nav-open")) return;
+          if (e.target === layout) {
+            layout.classList.remove("umg-layout--nav-open");
+            burger.setAttribute("aria-expanded", "false");
+          }
+        });
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && layout.classList.contains("umg-layout--nav-open")) {
+            layout.classList.remove("umg-layout--nav-open");
+            burger.setAttribute("aria-expanded", "false");
+          }
+        });
+      }
+      let start = "overview";
+      try {
+        const s = localStorage.getItem(UMG_LS_PANEL);
+        if (s && UMG_PANEL_IDS.includes(s)) start = s;
+      } catch (_) {}
+      showUmgPanel(start);
+    }
+
+    function updateOverviewKpis(j) {
+      const kC = document.getElementById("kpiCelda");
+      const kD = document.getElementById("kpiDist");
+      const kS = document.getElementById("kpiServo");
+      const kT = document.getElementById("kpiStamp");
+      if (!kC || !kD || !kS || !kT) return;
+      kC.textContent = j.celda != null && j.celda !== "" ? String(j.celda) : "—";
+      if (j.dist != null) {
+        kD.textContent = j.dist >= 999 ? "999 · sin eco" : String(j.dist) + " cm";
+      } else {
+        kD.textContent = "—";
+      }
+      if (typeof j.servo_angle === "number" && j.servo_angle >= 0 && j.servo_angle <= 180) {
+        kS.textContent = String(j.servo_angle) + "°";
+      } else if (lastServoAngle != null) {
+        kS.textContent = String(lastServoAngle) + "°";
+      } else {
+        kS.textContent = "—";
+      }
+      kT.textContent = new Date().toLocaleTimeString();
+    }
+
+    function updateServoDisplay(deg) {
+      const numEl = document.getElementById("servoAngleDisplay");
+      const fill = document.getElementById("servoAngleFill");
+      if (typeof deg === "number" && deg >= 0 && deg <= 180) {
+        lastServoAngle = deg;
+      }
+      const show =
+        typeof deg === "number" && deg >= 0 && deg <= 180
+          ? deg
+          : lastServoAngle != null
+            ? lastServoAngle
+            : null;
+      if (numEl) {
+        numEl.textContent = show == null ? "—" : String(show);
+      }
+      if (fill) {
+        if (show == null) {
+          fill.style.width = "0%";
+        } else {
+          fill.style.width = (show / 180) * 100 + "%";
+        }
+      }
+    }
+
+    function syncServoDegLabel() {
+      const range = document.getElementById("servoDeg");
+      const lab = document.getElementById("servoDegLabel");
+      if (range && lab) lab.textContent = range.value;
+    }
+
+    async function servoCmd(op, extraParams) {
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      const msg = document.getElementById("servoMsg");
+      if (!host) {
+        if (msg) {
+          msg.textContent = "Escribe la IP del ESP32.";
+          msg.className = "msg err servo-msg";
+        }
+        return;
+      }
+      let url = "/api/servo?host=" + encodeURIComponent(host) + "&port=" + port + "&op=" + encodeURIComponent(op);
+      if (extraParams) url += "&" + extraParams;
+      if (msg) {
+        msg.textContent = "";
+        msg.className = "msg servo-msg";
+      }
+      try {
+        const res = await fetch(url);
+        const j = await res.json();
+        if (!j.ok) {
+          if (msg) {
+            msg.textContent = j.error || "Error";
+            msg.className = "msg err servo-msg";
+          }
+          return;
+        }
+        if (msg) {
+          msg.textContent =
+            op === "sweep_on"
+              ? "Barrido activado."
+              : op === "sweep_off"
+                ? "Barrido detenido."
+                : op === "set"
+                  ? "Servo fijado. Reactiva el barrido con Barrido ON si lo necesitas."
+                  : "OK";
+          msg.className = "msg ok servo-msg";
+        }
+        if (op === "set" && typeof j.raw_lines === "object") {
+          for (let i = 0; i < j.raw_lines.length; i++) {
+            const line = j.raw_lines[i];
+            if (line.toUpperCase().indexOf("SERVO_ANG:") === 0) {
+              const m = line.match(/SERVO_ANG:\s*(\d+)/i);
+              if (m) updateServoDisplay(parseInt(m[1], 10));
+            }
+          }
+        }
+      } catch (e) {
+        if (msg) {
+          msg.textContent = String(e);
+          msg.className = "msg err servo-msg";
+        }
+      }
+    }
+
+    function setBars(r, g, b, c) {
+      const sumRgb =
+        r != null && g != null && b != null
+          ? Number(r) + Number(g) + Number(b)
+          : 0;
+      ["R", "G", "B", "C"].forEach((ch, i) => {
+        const v = [r, g, b, c][i];
+        const bar = document.getElementById("bar" + ch);
+        const val = document.getElementById("val" + ch);
+        if (v == null) {
+          bar.style.width = "0%";
+          val.textContent = "—";
+        } else {
+          bar.style.width = pct(v) + "%";
+          if (i < 3 && sumRgb > 0) {
+            const p = ((100 * Number(v)) / sumRgb).toFixed(1);
+            val.textContent = String(v) + " (" + p + "%)";
+          } else {
+            val.textContent = String(v);
+          }
+        }
+      });
+    }
+
+    function updateRgbPctLine(j) {
+      const el = document.getElementById("rgbPct");
+      if (!el) return;
+      let pr, pg, pb;
+      if (j.rgb_pct && typeof j.rgb_pct.r === "number") {
+        pr = j.rgb_pct.r;
+        pg = j.rgb_pct.g;
+        pb = j.rgb_pct.b;
+      } else if (j.r != null && j.g != null && j.b != null) {
+        const s = j.r + j.g + j.b;
+        if (!s) {
+          el.textContent = "";
+          return;
+        }
+        pr = (100 * j.r) / s;
+        pg = (100 * j.g) / s;
+        pb = (100 * j.b) / s;
+      } else {
+        el.textContent = "";
+        return;
+      }
+      el.textContent =
+        "R+G+B: R " + pr.toFixed(1) + "% · G " + pg.toFixed(1) + "% · B " + pb.toFixed(1) + "%";
+    }
+
+    function setCeldaClass(celda) {
+      if (!celda || celda === "—") {
+        celdaBadge.className = "badge UNKNOWN";
+        celdaBadge.textContent = "—";
+        return;
+      }
+      const allowed = ["ROJO", "AZUL", "VERDE", "BLANCO", "UNKNOWN", "SKIP"];
+      const t = allowed.includes(celda) ? celda : "UNKNOWN";
+      celdaBadge.className = "badge " + t;
+      celdaBadge.textContent = celda;
+    }
+
+    function setLiveUi(active) {
+      if (liveIndicator) {
+        liveIndicator.hidden = !active;
+        liveIndicator.classList.toggle("on", active);
+      }
+    }
+
+    let leerInFlight = false;
+
+    async function leer(silent) {
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      if (!host) {
+        if (!silent) {
+          msgEl.textContent = "Escribe la IP del ESP32.";
+          msgEl.className = "msg err";
+        }
+        return;
+      }
+      if (leerInFlight && silent) {
+        return;
+      }
+      leerInFlight = true;
+      if (!silent) {
+        msgEl.textContent = "Leyendo…";
+        msgEl.className = "msg";
+      }
+      try {
+        const res = await fetch("/api/leer?host=" + encodeURIComponent(host) + "&port=" + port);
+        const j = await res.json();
+        if (!j.ok) {
+          msgEl.textContent = j.error || "Error";
+          msgEl.className = "msg err";
+          rawEl.textContent = (j.raw_lines && j.raw_lines.length) ? j.raw_lines.join("\n") : JSON.stringify(j, null, 2);
+          setLastUpdateChip("Error en la última lectura", "err");
+          return;
+        }
+        if (!silent) {
+          msgEl.textContent = "Conexión correcta";
+          msgEl.className = "msg ok";
+        } else {
+          msgEl.textContent = "";
+          msgEl.className = "msg";
+        }
+        setLastUpdateChip("Última lectura: " + new Date().toLocaleTimeString(), "ok");
+        flashDashboard();
+        updateOverviewKpis(j);
+        updateSensorBanner(j);
+        if (threshLine) {
+          if (j.thresh) {
+            threshLine.hidden = false;
+            threshLine.textContent = j.thresh;
+          } else {
+            threshLine.hidden = true;
+            threshLine.textContent = "";
+          }
+        }
+        setCeldaClass(j.celda);
+        if (j.dist != null) {
+          distVal.textContent = j.dist >= 999 ? "999" : j.dist;
+          distVal.classList.toggle("dist-val--no-eco", j.dist >= 999);
+          if (distUnit) distUnit.textContent = j.dist >= 999 ? "sin eco" : "cm";
+        } else {
+          distVal.textContent = "—";
+          distVal.classList.remove("dist-val--no-eco");
+          if (distUnit) distUnit.textContent = "";
+        }
+        setDistGauge(j.dist != null ? j.dist : null);
+        if (typeof j.servo_angle === "number") {
+          updateServoDisplay(j.servo_angle);
+        }
+        if (j.sensor_ok === false) {
+          setBars(null, null, null, null);
+          setSwatch(null, null, null);
+          const rp = document.getElementById("rgbPct");
+          if (rp) rp.textContent = "";
+        } else {
+          setBars(j.r, j.g, j.b, j.c);
+          setSwatch(j.r, j.g, j.b);
+          updateRgbPctLine(j);
+        }
+        rawEl.textContent = (j.raw_lines || []).join("\n") || JSON.stringify(j, null, 2);
+        refreshWifiDashboardQuiet();
+      } catch (e) {
+        msgEl.textContent = String(e);
+        msgEl.className = "msg err";
+        setLastUpdateChip("Fallo de red o servidor", "err");
+      } finally {
+        leerInFlight = false;
+      }
+    }
+
+    const pingLogEl = document.getElementById("pingLog");
+    const MAX_PING_LINES = 40;
+
+    function appendPingLog(line) {
+      if (!pingLogEl) return;
+      const t = new Date().toLocaleTimeString();
+      const text = pingLogEl.textContent;
+      const lines = (text ? text.split("\n") : []).filter(Boolean);
+      lines.push("[" + t + "] " + line);
+      while (lines.length > MAX_PING_LINES) lines.shift();
+      pingLogEl.textContent = lines.join("\n");
+      pingLogEl.scrollTop = pingLogEl.scrollHeight;
+    }
+
+    async function ping(silent) {
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      if (!host) {
+        if (!silent) {
+          msgEl.textContent = "Indica la IP del ESP32.";
+          msgEl.className = "msg err";
+        }
+        return;
+      }
+      try {
+        const res = await fetch("/api/ping?host=" + encodeURIComponent(host) + "&port=" + port);
+        const j = await res.json();
+        const ms = j.ms_tcp != null ? " " + j.ms_tcp + " ms" : "";
+        if (!silent) {
+          msgEl.textContent = j.ok ? ("Ping OK" + ms) : ((j.error || "fallo") + ms);
+          msgEl.className = j.ok ? "msg ok" : "msg err";
+        }
+        appendPingLog(j.ok ? "PONG" + ms : "FALLO: " + (j.error || "?") + ms);
+      } catch (e) {
+        if (!silent) {
+          msgEl.textContent = String(e);
+          msgEl.className = "msg err";
+        }
+        appendPingLog("ERROR: " + e);
+      }
+    }
+
+    let leerTimer = null;
+    let pingTcpTimer = null;
+
+    function getIntervalMs() {
+      const el = document.getElementById("autoInterval");
+      return parseInt(el.value, 10) || 400;
+    }
+
+    function formatIntervalHuman() {
+      const ms = getIntervalMs();
+      if (ms % 1000 === 0) {
+        return ms / 1000 + " s";
+      }
+      return (ms / 1000).toFixed(2).replace(".", ",") + " s";
+    }
+
+    function startAutoTimer() {
+      if (leerTimer) {
+        clearInterval(leerTimer);
+        leerTimer = null;
+      }
+      const ms = getIntervalMs();
+      leerTimer = setInterval(() => leer(true), ms);
+    }
+
+    function setAuto(on) {
+      if (leerTimer) {
+        clearInterval(leerTimer);
+        leerTimer = null;
+      }
+      savePrefs();
+      if (on) {
+        if (!hostEl.value.trim()) {
+          setLiveUi(false);
+          msgEl.textContent = "Actualización automática activa: escribe la IP del ESP32.";
+          msgEl.className = "msg err";
+          return;
+        }
+        setLiveUi(true);
+        leer(false);
+        startAutoTimer();
+      } else {
+        setLiveUi(false);
+        msgEl.textContent = "";
+        msgEl.className = "msg";
+      }
+    }
+
+    function setPingTcp(on) {
+      if (pingTcpTimer) {
+        clearInterval(pingTcpTimer);
+        pingTcpTimer = null;
+      }
+      savePrefs();
+      if (on) {
+        if (!hostEl.value.trim()) {
+          msgEl.textContent = "Ping TCP: escribe la IP primero.";
+          msgEl.className = "msg err";
+          document.getElementById("pingTcp").checked = false;
+          return;
+        }
+        appendPingLog("— Ping TCP cada 2 s —");
+        ping(true);
+        pingTcpTimer = setInterval(() => ping(true), 2000);
+      } else {
+        appendPingLog("— Ping TCP detenido —");
+      }
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function hwI2cAddrToNum(s) {
+      const t = String(s).trim().toLowerCase();
+      if (t === "ninguno" || t === "") return null;
+      if (t.startsWith("0x")) {
+        const n = parseInt(t.slice(2), 16);
+        return Number.isFinite(n) ? n : null;
+      }
+      const n = parseInt(t, 10);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function hwI2cBusEmpty(list) {
+      return !list || !list.length || (list.length === 1 && String(list[0]).toUpperCase().indexOf("NINGUNO") >= 0);
+    }
+
+    /** TCS34725 suele responder en 0x29 (41 decimal). */
+    function hwI2cHasColorAddr(list) {
+      return (list || []).some(function (x) {
+        const n = hwI2cAddrToNum(x);
+        return n === 0x29 || n === 41;
+      });
+    }
+
+    function renderHwDiagCard(title, bodyHtml, state) {
+      const st = state === "ok" ? "good" : state === "warn" ? "warn" : "bad";
+      return (
+        '<article class="hw-diag-card hw-diag-card--' +
+        st +
+        '" tabindex="0">' +
+        '<div class="hw-diag-card__strip" aria-hidden="true"></div>' +
+        '<div class="hw-diag-card__body">' +
+        '<h4 class="hw-diag-card__title">' +
+        escapeHtml(title) +
+        "</h4>" +
+        '<div class="hw-diag-card__detail">' +
+        bodyHtml +
+        "</div></div></article>"
+      );
+    }
+
+    function hwDiagFinalize(j, netErr) {
+      syncHwPinsTable(j, netErr || null);
+      touchHwClock();
+      updateHwLiveStrip();
+    }
+
+    function renderHardwareDiagnostics(j, netErr) {
+      const sumEl = document.getElementById("hwDiagSummary");
+      const gridEl = document.getElementById("hwDiagGrid");
+      if (!sumEl || !gridEl) return;
+      var cardsHtml = "";
+      let pass = 0;
+      let fail = 0;
+      let warn = 0;
+
+      if (netErr || !j) {
+        lastHwHealth = "bad";
+        sumEl.className = "hw-diag__summary hw-diag__summary--bad";
+        sumEl.innerHTML =
+          '<span class="hw-diag__summaryBadge">Fallo</span> No se pudo completar el diagnóstico. Revisá IP, puerto TCP y que el firmware acepte <code>HARDWARE</code>.';
+        cardsHtml += renderHwDiagCard(
+          "Comunicación · comando HARDWARE",
+          "<p>" + escapeHtml(netErr || "Sin respuesta") + "</p>",
+          "fail"
+        );
+        gridEl.innerHTML = cardsHtml;
+        hwDiagFinalize(j, netErr);
+        return;
+      }
+
+      if (!j.ok) {
+        lastHwHealth = "bad";
+        const err = escapeHtml(j.error || "Error desconocido");
+        var rawPeek = ((j.raw_lines || []).slice(0, 12).join("\n") || "").trim();
+        cardsHtml += renderHwDiagCard(
+          "Comunicación · comando HARDWARE",
+          "<p>" + err + "</p>" +
+            (rawPeek
+              ? "<pre class=\"hw-diag-card__pre\">" + escapeHtml(rawPeek) + "</pre>"
+              : ""),
+          "fail"
+        );
+        sumEl.className = "hw-diag__summary hw-diag__summary--bad";
+        sumEl.innerHTML =
+          '<span class="hw-diag__summaryBadge">Fallo</span> El robot respondió con error. Detalle abajo.';
+        gridEl.innerHTML = cardsHtml;
+        hwDiagFinalize(j, null);
+        return;
+      }
+
+      pass++;
+      cardsHtml += renderHwDiagCard(
+        "Comunicación · comando HARDWARE",
+        "<p>Respuesta recibida con <code>LISTO</code>. Sesión TCP al ESP32 operativa para este test.</p>",
+        "ok"
+      );
+
+      var ver = (j.hw_ver || "").trim();
+      if (ver) {
+        pass++;
+        cardsHtml += renderHwDiagCard(
+          "Declaración del firmware",
+          "<p>Versión reportada: <strong>" +
+            escapeHtml(ver) +
+            "</strong></p>" +
+            (j.note ? "<p class=\"hw-diag-muted\">" + escapeHtml(j.note) + "</p>" : ""),
+          "ok"
+        );
+      } else {
+        warn++;
+        cardsHtml += renderHwDiagCard(
+          "Declaración del firmware",
+          "<p>No llegó línea <code>HW:VER:</code>. El mapa puede ser válido, pero conviene actualizar firmware.</p>",
+          "warn"
+        );
+      }
+
+      var pins = j.pins || [];
+      pins.sort(function (a, b) {
+        return a.gpio - b.gpio;
+      });
+      if (pins.length >= 6) {
+        pass++;
+        cardsHtml += renderHwDiagCard(
+          "Mapa GPIO",
+          "<p><strong>" +
+            pins.length +
+            "</strong> entradas <code>PIN:</code>. La tabla consolidada está a la derecha (o debajo en móvil).</p>",
+          "ok"
+        );
+      } else if (pins.length > 0) {
+        warn++;
+        cardsHtml += renderHwDiagCard(
+          "Mapa GPIO",
+          "<p>Sólo <strong>" +
+            pins.length +
+            "</strong> entrada(s) <code>PIN:</code>. ¿Firmware mínimo o respuesta incompleta?</p>",
+          "warn"
+        );
+      } else {
+        fail++;
+        cardsHtml += renderHwDiagCard(
+          "Mapa GPIO",
+          "<p>No hay líneas <code>PIN:</code> en la respuesta.</p>",
+          "fail"
+        );
+      }
+
+      var subs = [
+        {
+          name: "Puente L298N y motores",
+          re: /l298|motor|llanta|ena|enb|in1|in2|in3|in4/i,
+          hint: "Buscamos referencias a L298N, llantas o PWM ENA/ENB en las etiquetas.",
+        },
+        {
+          name: "HC-SR04 (ultrasonido)",
+          re: /hc-sr04|ultrason|echo|trig|sr04/i,
+          hint: "TRIG y ECHO deberían figurar en el mapa.",
+        },
+        {
+          name: "Servo del sensor",
+          re: /servo|sg90/i,
+          hint: "La señal del servo del barrido suele declararse como Servo o SG90.",
+        },
+        {
+          name: "Bus I2C (cableado SDA/SCL)",
+          re: /i2c|sda|scl|tcs34725|tcs|\bbno\b|bno055|bno085|imu/i,
+          hint: "Incluye pines declarados como I2C, color TCS34725 u otros sensores serie (ej. etiqueta «BNO»).",
+        },
+      ];
+      subs.forEach(function (s) {
+        var ok = pins.some(function (p) {
+          return s.re.test(String(p.label || ""));
+        });
+        if (ok) {
+          pass++;
+          cardsHtml += renderHwDiagCard(s.name, "<p>Figura en el mapa declarado por firmware.</p><p class=\"hw-diag-muted\">" + escapeHtml(s.hint) + "</p>", "ok");
+        } else {
+          fail++;
+          cardsHtml += renderHwDiagCard(
+            s.name,
+            "<p><strong>No</strong> aparece ninguna etiqueta esperada para este subsistema.</p><p class=\"hw-diag-muted\">" +
+              escapeHtml(s.hint) +
+              "</p>",
+            "fail"
+          );
+        }
+      });
+
+      var i2c = j.i2c || [];
+      var busDead = hwI2cBusEmpty(i2c);
+      var sawTcsAddr = hwI2cHasColorAddr(i2c);
+      var hci = j.has_color_init;
+
+      if (busDead) {
+        fail++;
+        cardsHtml += renderHwDiagCard(
+          "Escaneo I2C · bus",
+          "<p>No se reportan direcciones en el bus (o sólo <code>NINGUNO</code>). El sensor de color no podrá responder por I2C.</p>",
+          "fail"
+        );
+      } else {
+        pass++;
+        var codes = i2c
+          .map(function (x) {
+            return "<code>" + escapeHtml(String(x)) + "</code>";
+          })
+          .join(" ");
+        cardsHtml += renderHwDiagCard(
+          "Escaneo I2C · bus",
+          "<p>Direcciones detectadas: " + codes + "</p>",
+          "ok"
+        );
+      }
+
+      if (hci === true) {
+        pass++;
+        cardsHtml += renderHwDiagCard(
+          "TCS34725 · inicialización",
+          "<p>Firmware confirma <strong>HAS_COLOR:1</strong> — sensor de color listo a nivel driver.</p>",
+          "ok"
+        );
+      } else if (hci === false) {
+        fail++;
+        cardsHtml += renderHwDiagCard(
+          "TCS34725 · inicialización",
+          "<p>Firmware reporta color <strong>no</strong> inicializado (<code>HAS_COLOR:0</code>). Revisá I2C (SDA GPIO21 · SCL GPIO22), dirección y alimentación 3V3.</p>",
+          "fail"
+        );
+      } else {
+        if (sawTcsAddr) {
+          warn++;
+          cardsHtml += renderHwDiagCard(
+            "TCS34725 · inicialización",
+            "<p>Hay dirección típica <strong>0x29</strong> en el scan, pero el firmware no envió <code>HAS_COLOR</code>. Podría ser firmware antiguo o init pendiente.</p>",
+            "warn"
+          );
+        } else if (!busDead) {
+          warn++;
+          cardsHtml += renderHwDiagCard(
+            "TCS34725 · inicialización",
+            "<p>Hay dispositivos I2C, pero no la dirección habitual <strong>0x29</strong> del TCS34725 (o formato distinto en la trama).</p>",
+            "warn"
+          );
+        } else {
+          fail++;
+          cardsHtml += renderHwDiagCard(
+            "TCS34725 · inicialización",
+            "<p>Sin bus I2C visible y sin confirmación de driver — no se puede dar por bueno el sensor de color.</p>",
+            "fail"
+          );
+        }
+      }
+
+      if (fail > 0) {
+        sumEl.className = "hw-diag__summary hw-diag__summary--bad";
+        sumEl.innerHTML =
+          '<span class="hw-diag__summaryBadge">Revisar</span> Se marcaron <strong>' +
+          fail +
+          "</strong> ítem(s) en <span class=\"hw-diag-bad\">rojo</span>" +
+          (warn ? " y <strong>" + warn + "</strong> advertencia(s) en ámbar." : ".");
+      } else if (warn > 0) {
+        sumEl.className = "hw-diag__summary hw-diag__summary--warn";
+        sumEl.innerHTML =
+          '<span class="hw-diag__summaryBadge">Atención</span> Sin fallos críticos; hay <strong>' +
+          warn +
+          "</strong> advertencia(s). Revisá los recuadros ámbar.";
+      } else {
+        sumEl.className = "hw-diag__summary hw-diag__summary--good";
+        sumEl.innerHTML =
+          '<span class="hw-diag__summaryBadge">OK</span> Todos los chequeos automáticos del panel resultaron <span class=\"hw-diag-good\">correctos</span>.';
+      }
+
+      lastHwHealth = fail > 0 ? "bad" : warn > 0 ? "warn" : "ok";
+      gridEl.innerHTML = cardsHtml;
+      hwDiagFinalize(j, null);
+    }
+
+    async function loadHardware(opts) {
+      opts = opts || {};
+      const silent = !!opts.silent;
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      const sumEl0 = document.getElementById("hwDiagSummary");
+      const gridEl0 = document.getElementById("hwDiagGrid");
+
+      if (!host) {
+        lastHwHealth = "idle";
+        stopHwMonitor();
+        if (sumEl0) {
+          sumEl0.className = "hw-diag__summary hw-diag__summary--neutral";
+          sumEl0.innerHTML =
+            '<span class="hw-diag__summaryBadge">—</span> Escribí la IP en <strong>Conexión TCP</strong> y volvé aquí.';
+        }
+        if (gridEl0) gridEl0.innerHTML = "";
+        syncHwPinsTable(null, "Sin IP del ESP32 configurada.");
+        touchHwClock();
+        updateHwLiveStrip();
+        return;
+      }
+
+      if (silent && hwPollInFlight) return;
+      hwPollInFlight = true;
+
+      if (!silent) {
+        if (sumEl0) {
+          sumEl0.className = "hw-diag__summary hw-diag__summary--pending";
+          sumEl0.innerHTML =
+            '<span class="hw-diag__summaryBadge">…</span> Consultando <code>HARDWARE</code>…';
+        }
+        if (gridEl0) gridEl0.innerHTML = "";
+      }
+
+      try {
+        const res = await fetch("/api/hardware?host=" + encodeURIComponent(host) + "&port=" + port);
+        const j = await res.json();
+        renderHardwareDiagnostics(j, null);
+      } catch (e) {
+        renderHardwareDiagnostics(null, String(e));
+      } finally {
+        hwPollInFlight = false;
+      }
+    }
+
+    document.getElementById("btnHardware").addEventListener("click", () => {
+      savePrefs();
+      loadHardware({ silent: false });
+    });
+    const hwLiveEl = document.getElementById("hwLive");
+    if (hwLiveEl) {
+      hwLiveEl.addEventListener("change", function () {
+        savePrefs();
+        refreshHwMonitorState();
+      });
+    }
+    const hwLiveMsEl = document.getElementById("hwLiveMs");
+    if (hwLiveMsEl) {
+      hwLiveMsEl.addEventListener("change", function () {
+        savePrefs();
+        refreshHwMonitorState();
+      });
+    }
+    document.getElementById("btnLeer").addEventListener("click", () => {
+      savePrefs();
+      leer(false);
+    });
+    document.getElementById("btnPing").addEventListener("click", () => {
+      savePrefs();
+      ping(false);
+    });
+    const servoDegEl = document.getElementById("servoDeg");
+    if (servoDegEl) {
+      servoDegEl.addEventListener("input", syncServoDegLabel);
+      syncServoDegLabel();
+    }
+    const btnServoOn = document.getElementById("btnServoSweepOn");
+    if (btnServoOn) {
+      btnServoOn.addEventListener("click", () => {
+        savePrefs();
+        servoCmd("sweep_on");
+      });
+    }
+    const btnServoOff = document.getElementById("btnServoSweepOff");
+    if (btnServoOff) {
+      btnServoOff.addEventListener("click", () => {
+        savePrefs();
+        servoCmd("sweep_off");
+      });
+    }
+    const btnServoGo = document.getElementById("btnServoGo");
+    if (btnServoGo) {
+      btnServoGo.addEventListener("click", () => {
+        savePrefs();
+        const v = document.getElementById("servoDeg");
+        let deg = v ? parseInt(v.value, 10) : 90;
+        if (Number.isNaN(deg)) deg = 90;
+        deg = Math.max(0, Math.min(180, deg));
+        servoCmd("set", "deg=" + encodeURIComponent(String(deg)));
+      });
+    }
+    hostEl.addEventListener("input", () => {
+      savePrefs();
+      syncConnTarget();
+      if (robotStatusBanner) robotStatusBanner.hidden = true;
+      resetWifiUi();
+      refreshHwMonitorState();
+      if (document.getElementById("auto").checked && hostEl.value.trim() && !leerTimer) {
+        setAuto(true);
+      }
+    });
+    portEl.addEventListener("input", () => {
+      savePrefs();
+      syncConnTarget();
+      if (robotStatusBanner) robotStatusBanner.hidden = true;
+      resetWifiUi();
+      refreshHwMonitorState();
+    });
+    document.getElementById("auto").addEventListener("change", (ev) => setAuto(ev.target.checked));
+    document.getElementById("autoInterval").addEventListener("change", () => {
+      savePrefs();
+      if (document.getElementById("auto").checked) {
+        startAutoTimer();
+      }
+    });
+    document.getElementById("pingTcp").addEventListener("change", (ev) => setPingTcp(ev.target.checked));
+
+    const btnRobotIp = document.getElementById("btnRobotIp");
+    if (btnRobotIp) {
+      btnRobotIp.addEventListener("click", () => {
+        savePrefs();
+        fetchRobotStatus();
+      });
+    }
+
+    loadPrefs();
+    syncConnTarget();
+    fetchWhoami();
+    setLastUpdateChip("Esperando lectura…", "neutral");
+
+    initUmgShell();
+
+    function bootstrapLive() {
+      if (document.getElementById("auto").checked) {
+        if (hostEl.value.trim()) {
+          setAuto(true);
+        } else {
+          msgEl.textContent = "Escribe la IP del ESP32: los datos se actualizarán solos cada " + formatIntervalHuman() + ".";
+          msgEl.className = "msg err";
+        }
+      }
+    }
+    setTimeout(bootstrapLive, 200);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") updateHwLiveStrip();
+      if (document.visibilityState === "visible" && document.getElementById("auto").checked && hostEl.value.trim()) {
+        if (!leerTimer) {
+          setAuto(true);
+        } else {
+          leer(true);
+        }
+      }
+    });
+    if (document.getElementById("pingTcp").checked && hostEl.value.trim()) {
+      setTimeout(() => setPingTcp(true), 500);
+    }
+  </script>
+</body>
+</html>

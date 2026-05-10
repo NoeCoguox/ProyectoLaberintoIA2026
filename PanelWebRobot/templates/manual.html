@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Control manual — Laberinto IA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;500&family=Poppins:ital,wght@0,500;0,600;0,700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}" />
+  <script src="{{ url_for('static', filename='panel-theme-init.js') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel-theme.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='soft-ui-shell.css') }}" />
+</head>
+<body class="manual-page manual-page--clean panel-app">
+  <div class="bg-mesh" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <div class="wrap manual-wrap manual-wrap--clean">
+    <a href="{{ url_for('index') }}" class="manual-back">← Volver al panel del robot</a>
+
+    <header class="manual-hero">
+      <p class="manual-hero__eyebrow" aria-hidden="true">Puente Flask · servidor TCP ESP32</p>
+      <h1>Control manual del carrito</h1>
+      <p class="manual-hero__lead">
+        Misma IP y puerto que el panel principal. Cada dirección puede llevar su propia duración en ms (<strong>Stop</strong> no usa tiempo). El indicador derecho muestra <strong>PING&nbsp;TCP</strong> cada pocos segundos (confirmación&nbsp;PONG del firmware).
+      </p>
+    </header>
+
+    <section class="card manual-card manual-card--setup">
+      <header class="manual-card__headerRow">
+        <div>
+          <h2 class="manual-card__title">Conexión y duraciones</h2>
+          <p class="manual-card__subtitle">Endpoint LAN del robot · latencia hasta el puerto configurado</p>
+        </div>
+      </header>
+
+      <div class="manual-conn-strip">
+        <div class="manual-setup-grid">
+          <div class="field-group manual-field manual-field--host">
+            <label for="host">IP del ESP32</label>
+            <input type="text" id="host" placeholder="192.168.x.x · 10.x.x.x" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="field-group manual-field manual-field--port">
+            <label for="port">Puerto</label>
+            <input type="number" id="port" value="8888" min="1" max="65535" />
+          </div>
+        </div>
+        <div
+          id="manualPingLive"
+          class="manual-ping-live manual-ping-live--idle"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          title="Ping TCP relay vía panel Flask (/api/ping). No es ICMP del sistema."
+        >
+          <span class="manual-ping-live__pulse" aria-hidden="true"></span>
+          <div class="manual-ping-live__text">
+            <span class="manual-ping-live__kicker">Ping TCP · PONG</span>
+            <span id="manualPingMs" class="manual-ping-live__ms">—</span>
+            <span id="manualPingCaption" class="manual-ping-live__cap">Sin IP configurada</span>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="manual-card__sectitle" id="pulseSectionLabel">Milisegundos por dirección <span class="manual-card__sectag">MOVER</span></h3>
+      <div class="manual-pulse-grid" role="group" aria-labelledby="pulseSectionLabel">
+        <div class="manual-pulse-tile">
+          <div class="field-group manual-field manual-field--dir">
+            <label for="movePulseMsAdelante">Arriba <span class="manual-field__sub">adelante</span></label>
+            <input type="number" id="movePulseMsAdelante" data-pulse-dir="adelante" min="50" max="60000" step="10" value="350" inputmode="numeric" />
+            <span class="manual-field__hint" id="movePulseHintAdelante">≈ 0,350 s</span>
+          </div>
+        </div>
+        <div class="manual-pulse-tile">
+          <div class="field-group manual-field manual-field--dir">
+            <label for="movePulseMsAtras">Abajo <span class="manual-field__sub">atrás</span></label>
+            <input type="number" id="movePulseMsAtras" data-pulse-dir="atras" min="50" max="60000" step="10" value="350" inputmode="numeric" />
+            <span class="manual-field__hint" id="movePulseHintAtras">≈ 0,350 s</span>
+          </div>
+        </div>
+        <div class="manual-pulse-tile">
+          <div class="field-group manual-field manual-field--dir">
+            <label for="movePulseMsIzquierda">Izquierda</label>
+            <input type="number" id="movePulseMsIzquierda" data-pulse-dir="izquierda" min="50" max="60000" step="10" value="350" inputmode="numeric" />
+            <span class="manual-field__hint" id="movePulseHintIzquierda">≈ 0,350 s</span>
+          </div>
+        </div>
+        <div class="manual-pulse-tile">
+          <div class="field-group manual-field manual-field--dir">
+            <label for="movePulseMsDerecha">Derecha</label>
+            <input type="number" id="movePulseMsDerecha" data-pulse-dir="derecha" min="50" max="60000" step="10" value="350" inputmode="numeric" />
+            <span class="manual-field__hint" id="movePulseHintDerecha">≈ 0,350 s</span>
+          </div>
+        </div>
+      </div>
+      <p class="manual-pulse-actions">
+        <button type="button" class="manual-pulse-sync" id="btnPulseSyncAll" title="Copia el valor de Arriba a las otras tres direcciones">
+          Igualar todo al valor de Arriba
+        </button>
+      </p>
+      <p class="manual-mini-hint">
+        Rango 50–60000&nbsp;ms · los giros suelen llevar otros tiempos que el avance. Si ves “ocupado”, pausá <code>LEER</code> en el panel principal: el ESP32 acepta <strong>un</strong> cliente TCP a la vez.
+      </p>
+    </section>
+
+    <section class="card manual-card manual-card--controls" aria-labelledby="movePadLabel">
+      <h2 id="movePadLabel" class="manual-card__title">Dirección</h2>
+      <div class="manual-dpad-shell manual-dpad-shell--solo">
+        <div class="move-pad move-pad--clean" role="group" aria-labelledby="movePadLabel">
+          <div class="move-pad__row move-pad__row--top">
+            <button type="button" class="move-btn move-btn--primary" id="btnMoveUp" data-dir="adelante" title="Arriba · adelante">
+              <span class="move-btn__glyph" aria-hidden="true">▲</span><span class="move-btn__cap">Arriba</span>
+            </button>
+          </div>
+          <div class="move-pad__row move-pad__row--mid">
+            <button type="button" class="move-btn move-btn--primary" id="btnMoveLeft" data-dir="izquierda" title="Izquierda">
+              <span class="move-btn__glyph" aria-hidden="true">◀</span><span class="move-btn__cap">Izquierda</span>
+            </button>
+            <button type="button" class="move-btn move-btn--stop" id="btnMoveStop" data-dir="detener" title="Detener">
+              <span class="move-btn__glyph" aria-hidden="true">■</span><span class="move-btn__cap">Stop</span>
+            </button>
+            <button type="button" class="move-btn move-btn--primary" id="btnMoveRight" data-dir="derecha" title="Derecha">
+              <span class="move-btn__glyph" aria-hidden="true">▶</span><span class="move-btn__cap">Derecha</span>
+            </button>
+          </div>
+          <div class="move-pad__row move-pad__row--bot">
+            <button type="button" class="move-btn move-btn--primary" id="btnMoveDown" data-dir="atras" title="Abajo · atrás">
+              <span class="move-btn__glyph" aria-hidden="true">▼</span><span class="move-btn__cap">Abajo</span>
+            </button>
+          </div>
+        </div>
+        <p id="moveMsg" class="msg move-msg manual-move-msg" role="status"></p>
+        <p class="manual-kbd-hint manual-kbd-hint--short">
+          Teclado: <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> · <kbd>Espacio</kbd> detiene (con el foco fuera de los campos).
+        </p>
+      </div>
+    </section>
+
+    <details class="manual-faq">
+      <summary class="manual-faq__sum">Si no responde o falla la conexión</summary>
+      <ul class="manual-faq__list">
+        <li>En el panel principal, <strong>pausá</strong> la actualización automática (<code>LEER</code>) o subí el intervalo: el ESP32 solo acepta un cliente TCP a la vez.</li>
+        <li>El recuadro superior usa el mismo <strong>Ping&nbsp;TCP</strong> (<code>PING→PONG</code>) que el panel — no sustituye a <code>ping</code> ICMP de Windows.</li>
+        <li>Después de cada orden deberías ver el mensaje de estado debajo de la cruceta.</li>
+      </ul>
+    </details>
+  </div>
+
+  <script>
+    const hostEl = document.getElementById("host");
+    const portEl = document.getElementById("port");
+
+    const PULSE_LS = {
+      adelante: "manualMovePulseMs_adelante",
+      atras: "manualMovePulseMs_atras",
+      izquierda: "manualMovePulseMs_izquierda",
+      derecha: "manualMovePulseMs_derecha",
+    };
+
+    const PULSE_IDS = {
+      adelante: "movePulseMsAdelante",
+      atras: "movePulseMsAtras",
+      izquierda: "movePulseMsIzquierda",
+      derecha: "movePulseMsDerecha",
+    };
+
+    const HINT_IDS = {
+      adelante: "movePulseHintAdelante",
+      atras: "movePulseHintAtras",
+      izquierda: "movePulseHintIzquierda",
+      derecha: "movePulseHintDerecha",
+    };
+
+    function savePrefs() {
+      try {
+        localStorage.setItem("robotPanelHost", hostEl.value.trim());
+        localStorage.setItem("robotPanelPort", String(parseInt(portEl.value, 10) || 8888));
+        Object.keys(PULSE_LS).forEach(function (d) {
+          const el = document.getElementById(PULSE_IDS[d]);
+          if (el) localStorage.setItem(PULSE_LS[d], el.value);
+        });
+      } catch (_) {}
+    }
+
+    function parseMsInput(el, fallbackMs) {
+      if (!el) return fallbackMs;
+      const ms = parseInt(el.value, 10);
+      if (!Number.isFinite(ms)) return fallbackMs;
+      return Math.max(50, Math.min(60000, ms));
+    }
+
+    function getPulseMsForDir(dir) {
+      const id = PULSE_IDS[dir];
+      if (!id) return 350;
+      return parseMsInput(document.getElementById(id), 350);
+    }
+
+    function formatMsAsSecHint(ms) {
+      const sec = (ms / 1000).toFixed(3).replace(".", ",");
+      return "≈ " + sec + " s";
+    }
+
+    function updatePulseSecHint(dir) {
+      function one(d) {
+        const hid = HINT_IDS[d];
+        if (!hid) return;
+        const elH = document.getElementById(hid);
+        if (elH) elH.textContent = formatMsAsSecHint(getPulseMsForDir(d));
+      }
+      if (dir) one(dir);
+      else Object.keys(PULSE_IDS).forEach(one);
+    }
+
+    function loadPrefs() {
+      try {
+        const h = localStorage.getItem("robotPanelHost");
+        const p = localStorage.getItem("robotPanelPort");
+        const legacy = localStorage.getItem("manualMovePulseMs");
+        const legacySec = localStorage.getItem("manualMovePulseSec");
+        if (h) hostEl.value = h;
+        if (p) portEl.value = p;
+
+        let base = "350";
+        if (legacy != null && legacy !== "") base = legacy;
+        else if (legacySec != null && legacySec !== "") {
+          const sec = parseFloat(legacySec);
+          if (Number.isFinite(sec)) {
+            base = String(Math.max(50, Math.min(60000, Math.round(sec * 1000))));
+            localStorage.setItem("manualMovePulseMs", base);
+          }
+        }
+
+        const dirs = ["adelante", "atras", "izquierda", "derecha"];
+        dirs.forEach(function (d) {
+          const el = document.getElementById(PULSE_IDS[d]);
+          if (!el) return;
+          const saved = localStorage.getItem(PULSE_LS[d]);
+          el.value = saved != null && saved !== "" ? saved : base;
+        });
+        updatePulseSecHint();
+      } catch (_) {}
+    }
+
+    let moveBusy = false;
+
+    const PING_INTERVAL_MS = 2500;
+
+    /** Ping TCP relay (Flask); evita paralelo con mover para no colisionar el único socket del ESP32. */
+    let pingTcpTimer = null;
+    let pingInFlight = false;
+
+    function pausePingTcp() {
+      if (pingTcpTimer) {
+        clearInterval(pingTcpTimer);
+        pingTcpTimer = null;
+      }
+    }
+
+    function pingStripSetIdle(reason) {
+      const strip = document.getElementById("manualPingLive");
+      const msEl = document.getElementById("manualPingMs");
+      const cap = document.getElementById("manualPingCaption");
+      if (!strip || !msEl || !cap) return;
+      strip.className = "manual-ping-live manual-ping-live--idle";
+      msEl.textContent = "—";
+      cap.textContent = reason || "Sin IP configurada";
+    }
+
+    async function pingTcpOnce() {
+      const strip = document.getElementById("manualPingLive");
+      const msEl = document.getElementById("manualPingMs");
+      const cap = document.getElementById("manualPingCaption");
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      if (!strip || !msEl || !cap) return;
+      if (!host) {
+        pingStripSetIdle("Escribí la IP del ESP32");
+        return;
+      }
+      if (moveBusy || pingInFlight) return;
+      pingInFlight = true;
+      strip.classList.remove("manual-ping-live--idle", "manual-ping-live--ok", "manual-ping-live--fail", "manual-ping-live--busy");
+      strip.classList.add("manual-ping-live--wait");
+      cap.textContent = "Comprobando…";
+      try {
+        const res = await fetch("/api/ping?host=" + encodeURIComponent(host) + "&port=" + port);
+        const j = await res.json();
+        const msPart = j.ms_tcp != null ? j.ms_tcp + " ms" : "—";
+        if (j.ok && j.pong) {
+          strip.className = "manual-ping-live manual-ping-live--ok";
+          msEl.textContent = msPart;
+          cap.textContent = "Conexión viva · PONG recibido";
+        } else {
+          strip.className = "manual-ping-live manual-ping-live--fail";
+          msEl.textContent = msPart;
+          cap.textContent = (j.error || "Sin PONG").replace(/^Error\s+/i, "");
+        }
+      } catch (e) {
+        strip.className = "manual-ping-live manual-ping-live--fail";
+        msEl.textContent = "—";
+        cap.textContent = String(e);
+      } finally {
+        pingInFlight = false;
+      }
+    }
+
+    function resumePingTcp() {
+      pausePingTcp();
+      const host = hostEl.value.trim();
+      if (!host) {
+        pingStripSetIdle("Escribí la IP del ESP32");
+        return;
+      }
+      if (moveBusy) return;
+      pingTcpOnce();
+      pingTcpTimer = setInterval(pingTcpOnce, PING_INTERVAL_MS);
+    }
+
+    let pingDeb = null;
+
+    function schedulePingRestart() {
+      clearTimeout(pingDeb);
+      pingDeb = setTimeout(function () {
+        if (!moveBusy) resumePingTcp();
+      }, 350);
+    }
+
+    function setMoveBusy(busy) {
+      moveBusy = busy;
+      document.querySelectorAll(".move-btn").forEach((btn) => {
+        btn.disabled = busy;
+      });
+      const strip = document.getElementById("manualPingLive");
+      const msEl = document.getElementById("manualPingMs");
+      const cap = document.getElementById("manualPingCaption");
+      if (busy) {
+        pausePingTcp();
+        if (strip && msEl && cap) {
+          strip.className = "manual-ping-live manual-ping-live--busy";
+          msEl.textContent = "—";
+          cap.textContent = "Movimiento en curso · ping en pausa";
+        }
+      } else {
+        resumePingTcp();
+      }
+    }
+
+    async function robotMove(dir) {
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      const msg = document.getElementById("moveMsg");
+      if (!host) {
+        msg.textContent = "Indicá la IP del ESP32 arriba.";
+        msg.className = "msg err move-msg manual-move-msg";
+        return;
+      }
+      if (moveBusy) return;
+      setMoveBusy(true);
+      msg.textContent = dir === "detener" ? "Deteniendo…" : "En movimiento…";
+      msg.className = "msg move-msg manual-move-msg";
+      let url =
+        "/api/mover?host=" +
+        encodeURIComponent(host) +
+        "&port=" +
+        port +
+        "&dir=" +
+        encodeURIComponent(dir);
+      if (dir !== "detener") url += "&ms=" + String(getPulseMsForDir(dir));
+      try {
+        const res = await fetch(url);
+        const j = await res.json();
+        if (!j.ok) {
+          msg.textContent = j.error || "Error en el comando";
+          msg.className = "msg err move-msg manual-move-msg";
+        } else {
+          msg.textContent =
+            dir === "detener" ? "Motores detenidos." : "Listo: movimiento completado.";
+          msg.className = "msg ok move-msg manual-move-msg";
+        }
+      } catch (e) {
+        msg.textContent = String(e);
+        msg.className = "msg err move-msg manual-move-msg";
+      } finally {
+        setMoveBusy(false);
+      }
+    }
+
+    document.querySelectorAll(".move-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        savePrefs();
+        const d = btn.getAttribute("data-dir");
+        if (d) robotMove(d);
+      });
+    });
+
+    hostEl.addEventListener("input", function () {
+      savePrefs();
+      schedulePingRestart();
+    });
+    portEl.addEventListener("input", function () {
+      savePrefs();
+      schedulePingRestart();
+    });
+    Object.keys(PULSE_IDS).forEach(function (d) {
+      const el = document.getElementById(PULSE_IDS[d]);
+      if (el) {
+        el.addEventListener("input", function () {
+          updatePulseSecHint(d);
+          savePrefs();
+        });
+      }
+    });
+
+    var btnPulseSyncAll = document.getElementById("btnPulseSyncAll");
+    if (btnPulseSyncAll) {
+      btnPulseSyncAll.addEventListener("click", function () {
+        var root = document.getElementById("movePulseMsAdelante");
+        if (!root) return;
+        var v = root.value;
+        ["atras", "izquierda", "derecha"].forEach(function (d) {
+          var oe = document.getElementById(PULSE_IDS[d]);
+          if (oe) oe.value = v;
+          updatePulseSecHint(d);
+        });
+        updatePulseSecHint("adelante");
+        savePrefs();
+      });
+    }
+
+    document.addEventListener("keydown", (ev) => {
+      const t = ev.target;
+      const tag = t && t.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable) return;
+      const keyMap = {
+        ArrowUp: "adelante",
+        ArrowDown: "atras",
+        ArrowLeft: "izquierda",
+        ArrowRight: "derecha",
+      };
+      const dir = keyMap[ev.key];
+      if (dir) {
+        ev.preventDefault();
+        savePrefs();
+        robotMove(dir);
+        return;
+      }
+      if (ev.key === " " || ev.code === "Space") {
+        ev.preventDefault();
+        savePrefs();
+        robotMove("detener");
+      }
+    });
+
+    loadPrefs();
+    schedulePingRestart();
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) schedulePingRestart();
+    });
+  </script>
+</body>
+</html>

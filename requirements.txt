@@ -1,0 +1,2 @@
+# Instala dependencias del simulador (pygame, etc.)
+-r SimuladorLaberintoIA/requirements.txt

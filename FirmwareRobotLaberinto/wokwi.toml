@@ -1,0 +1,6 @@
+# Proyecto Wokwi - Robot Laberinto ESP32
+# Abrir en https://wokwi.com con "New Project" y subir el .ino, o usar extensión Wokwi en VS Code.
+
+[wokwi]
+version = 1
+firmware = "FirmwareRobotLaberinto.ino"

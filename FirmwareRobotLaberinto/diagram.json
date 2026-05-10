@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "author": "Proyecto IA 2026 — Robot Laberinto (GPIO = DevKit físico 38 pines v1.3)",
+  "editor": "wokwi",
+  "parts": [
+    { "id": "esp32", "type": "wokwi-esp32-devkit-v1", "left": 24, "top": 72 },
+    { "id": "l298n", "type": "l298n", "left": 300, "top": 300 },
+    { "id": "hc-sr04", "type": "wokwi-hc-sr04", "left": 520, "top": 88 }
+  ],
+  "connections": [
+    [ "esp32:VIN", "hc-sr04:VCC", "red", ["h24", "*", "h-24"] ],
+    [ "esp32:GND.1", "hc-sr04:GND", "black", ["h12", "v80", "h420", "*", "h-12"] ],
+    [ "esp32:GPIO5", "hc-sr04:TRIG", "green", ["h40", "v40", "h380", "*", "v-40", "h-40"] ],
+    [ "esp32:GPIO18", "hc-sr04:ECHO", "blue", ["h48", "v48", "h356", "*", "v-48", "h-48"] ],
+    [ "esp32:VIN", "l298n:VCC", "red", ["v120", "h200", "v108", "*", "v-108"] ],
+    [ "esp32:GND.2", "l298n:GND", "black", ["v140", "h180", "v88", "*", "v-88"] ],
+    [ "esp32:GPIO12", "l298n:IN1", "green", ["v60", "h180", "v48", "*", "v-48"] ],
+    [ "esp32:GPIO13", "l298n:IN2", "green", ["v80", "h160", "v60", "*", "v-60"] ],
+    [ "esp32:GPIO14", "l298n:IN3", "green", ["v100", "h140", "v80", "*", "v-80"] ],
+    [ "esp32:GPIO27", "l298n:IN4", "green", ["v120", "h120", "v100", "*", "v-100"] ],
+    [ "esp32:GPIO25", "l298n:ENA", "orange", ["v40", "h220", "v20", "*", "v-20"] ],
+    [ "esp32:GPIO26", "l298n:ENB", "orange", ["v60", "h200", "v40", "*", "v-40"] ]
+  ]
+}

@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Laboratorio de navegación — UMG</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,500;0,600;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;500&family=Poppins:ital,wght@0,500;0,600;0,700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}" />
+  <script src="{{ url_for('static', filename='panel-theme-init.js') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel-theme.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='soft-ui-shell.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='laberinto_fisico.css') }}" />
+</head>
+<body class="panel-app lf-pro">
+  <div class="lf-pro-bg" aria-hidden="true"></div>
+  <div class="lf-pro-bg lf-pro-bg--mesh" aria-hidden="true"></div>
+  <div class="lf-pro-bg lf-pro-bg--glow" aria-hidden="true"></div>
+  <div class="lf-pro-vignette" aria-hidden="true"></div>
+  <div class="grain grain--umg" aria-hidden="true"></div>
+
+  <div class="lf-pro-shell">
+    <header class="lf-pro-header">
+      <div class="lf-pro-header__brand">
+        <img class="lf-pro-logo" src="{{ url_for('static', filename='umg-seal.svg') }}" width="56" height="56" alt="UMG" />
+        <div class="lf-pro-header__text">
+          <p class="lf-pro-eyebrow">Universidad Mariano Gálvez · Inteligencia artificial</p>
+          <h1 class="lf-pro-title" id="lfPageTitleMain">Laboratorio de navegación</h1>
+          <p class="lf-pro-tagline">Sensores fusionados · <span class="lf-pro-mono">BFS · A* · DFS · Greedy</span></p>
+        </div>
+      </div>
+      <nav class="lf-pro-nav" aria-label="Accesos">
+        <a href="{{ url_for('index') }}" class="lf-pro-nav__link">← Panel principal</a>
+        <a href="{{ url_for('manual') }}" class="lf-pro-btn lf-pro-btn--ghost">Control manual</a>
+        <a href="{{ url_for('mapa') }}" class="lf-pro-btn lf-pro-btn--ghost">Editor de mapa</a>
+      </nav>
+    </header>
+
+    <div class="lf-pro-cmdbar lf-glass" role="navigation" aria-label="Resumen y ayuda">
+      <div class="lf-pro-cmdbar__row">
+        <p class="lf-pro-cmdbar__crumb">
+          <strong class="lf-pro-cmdbar__kbd">PC</strong> planifica y envía <code>MOVER:*</code> · <code>LEER</code> pinta el mapa · <strong>clic</strong> en celda = <strong>meta</strong> · flecha = frente · calibración 30×30&nbsp;cm en <strong>ms</strong>.
+          <strong id="lfSimChip" class="lf-sim-chip" hidden>Simulador activo</strong>
+        </p>
+        <details class="lf-pro-cmdbar__help">
+          <summary class="lf-pro-cmdbar__helpSum">Leyenda · contexto completo</summary>
+          <div class="lf-pro-cmdbar__helpBody">
+            <p class="lf-pro-context__mission lf-pro-context__mission--inbar">
+              <strong>PC = cerebro:</strong> matriz interna y TCP al ESP32. <strong>TCS34725:</strong> verde <strong>meta</strong> · azul transitable · rojo no pasar (sin blanco en este preset). Un <strong>cliente TCP</strong> a la vez entre paneles.
+            </p>
+            <div class="lf-legend lf-legend--pro lf-legend--inline" aria-label="Leyenda del mapa">
+              <span class="lf-legend__item"><span class="lf-swatch lf-swatch--desconocido"></span>Desconocido</span>
+              <span class="lf-legend__item"><span class="lf-swatch lf-swatch--libre"></span>Libre (azul)</span>
+              <span class="lf-legend__item"><span class="lf-swatch lf-swatch--inicio"></span>Meta en suelo (verde TCS)</span>
+              <span class="lf-legend__item"><span class="lf-swatch lf-swatch--objetivo"></span>Meta</span>
+              <span class="lf-legend__item"><span class="lf-swatch lf-swatch--obstaculo"></span>Peligro (rojo)</span>
+              <span class="lf-legend__item"><span class="lf-swatch lf-swatch--ruta"></span>Ruta</span>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="lf-pro-dashboard">
+      <div class="lf-pro-main">
+        <article class="lf-glass lf-map-hero" aria-labelledby="lfMapTitle">
+          <div class="lf-map-hero__top">
+            <div>
+              <h2 id="lfMapTitle" class="lf-glass__h">Mapa interno</h2>
+              <p class="lf-glass__sub"><code>LEER</code> actualiza colores · clic = meta · tamaño e import/export abajo</p>
+            </div>
+            <span class="lf-badge-live"><span class="lf-badge-live__dot" aria-hidden="true"></span>Vista en vivo</span>
+          </div>
+          <div class="lf-map-stage lf-map-stage--immersive">
+            <div class="lf-map-scene">
+              <div class="lf-map-scene__floor"></div>
+              <div class="lf-map-frame">
+                <div id="lfMapGrid" class="lf-map-grid lf-map-grid--xl lf-map-floor" aria-label="Mapa laberinto"></div>
+              </div>
+            </div>
+            <div class="lf-kpi-grid" id="lfMetrics" aria-live="polite">
+              <div class="lf-kpi">
+                <span class="lf-kpi__label">Movimientos <span class="lf-kpi-tip" title="Cada MOVER enviado desde sesión abierta">(MOVER)</span></span>
+                <span class="lf-kpi__val" id="mMoves">0</span>
+              </div>
+              <div class="lf-kpi">
+                <span class="lf-kpi__label">Tiempo autonomía</span>
+                <span class="lf-kpi__val" id="mTime">—</span>
+              </div>
+              <div class="lf-kpi">
+                <span class="lf-kpi__label">Nodos grafo</span>
+                <span class="lf-kpi__val" id="mNodes">—</span>
+              </div>
+              <div class="lf-kpi">
+                <span class="lf-kpi__label">Celdas ruta</span>
+                <span class="lf-kpi__val" id="mPathLen">—</span>
+              </div>
+              <div class="lf-kpi lf-kpi--wide">
+                <span class="lf-kpi__label">Estado agente</span>
+                <span class="lf-kpi__val lf-kpi__val--sm" id="mState">Listo</span>
+              </div>
+            </div>
+            <p id="lfSearchKpiHint" class="lf-kpi-footnote"></p>
+          </div>
+          <div class="lf-grid-dims" role="group" aria-labelledby="lfDimLabel">
+            <p id="lfDimLabel" class="lf-grid-dims__hint">Tamaño de la grilla (3–32). Aplicar <strong>reinicia el mapa</strong> y fija robot en (0,0), meta esquina inferior derecha.</p>
+            <div class="lf-grid-dims__row">
+              <label class="lf-dim-field"><span>Ancho · columnas (X)</span><input type="number" id="lfGridW" min="3" max="32" value="8" step="1" class="lf-input-pro" /></label>
+              <label class="lf-dim-field"><span>Alto · filas (Y)</span><input type="number" id="lfGridH" min="3" max="32" value="8" step="1" class="lf-input-pro" /></label>
+              <button type="button" id="btnApplyDims" class="lf-pro-btn lf-pro-btn--primary lf-grid-dims__btn">Aplicar tamaño</button>
+            </div>
+          </div>
+          <div class="lf-map-hero__actions">
+            <button type="button" id="btnResetMap" class="lf-pro-btn lf-pro-btn--soft">Reset mapa</button>
+            <button type="button" id="btnExportMap" class="lf-pro-btn lf-pro-btn--soft">Exportar JSON</button>
+            <label class="lf-pro-btn lf-pro-btn--soft lf-file-btn">
+              Importar
+              <input type="file" id="fileImportMap" accept="application/json" hidden />
+            </label>
+          </div>
+        </article>
+
+        <div class="lf-pro-workbench">
+          <div class="lf-main-tabs" role="tablist" aria-label="Vista inferior del mapa">
+            <button type="button" class="lf-main-tab lf-main-tab--active" role="tab" aria-selected="true" data-lf-main-tab="sense">Sensores</button>
+            <button type="button" class="lf-main-tab" role="tab" aria-selected="false" data-lf-main-tab="log">Bitácora</button>
+            <button type="button" class="lf-main-tab" role="tab" aria-selected="false" data-lf-main-tab="sim">Simulador</button>
+          </div>
+          <div class="lf-main-tab-panels">
+            <div class="lf-main-tab-panel lf-main-tab-panel--active" data-lf-main-panel="sense" role="tabpanel" id="lfMainPanelSense" aria-labelledby="lfObsTitle">
+              <article class="lf-glass lf-glass--grow lf-glass--sense" aria-labelledby="lfObsTitle">
+                <h2 id="lfObsTitle" class="lf-glass__h">Percepción en vivo</h2>
+                <div class="lf-readout lf-readout--pro">
+                  <div id="celdaBadge" class="badge UNKNOWN lf-chip-sensor">—</div>
+                  <div class="lf-readout__cols">
+                    <span id="mapStateReadout" class="lf-readout__line lf-pro-mono">Mapa · —</span>
+                    <span id="distReadout" class="lf-readout__line lf-pro-mono">Ultrasonido · —</span>
+                  </div>
+                </div>
+                <div class="lf-toolbar lf-toolbar--pro">
+                  <button type="button" id="btnLeer" class="lf-pro-btn lf-pro-btn--primary">⚡ Leer sensores</button>
+                  <label class="lf-check lf-check--pro">
+                    <input type="checkbox" id="lfAuto" /> Auto
+                  </label>
+                  <select id="lfInterval" class="lf-select-pro" aria-label="Intervalo muestreo">
+                    <option value="500">0,5 s</option>
+                    <option value="1000">1 s</option>
+                    <option value="1500" selected>1,5 s</option>
+                    <option value="3000">3 s</option>
+                  </select>
+                  <label class="lf-check lf-check--pro">
+                    <input type="checkbox" id="lfOnlyOnChange" /> Bitácora si cambia
+                  </label>
+                </div>
+                <p id="lfMsg" class="lf-msg-slot msg"></p>
+              </article>
+            </div>
+            <div class="lf-main-tab-panel" data-lf-main-panel="log" role="tabpanel" id="lfMainPanelLog" aria-labelledby="lfLogTitle" hidden>
+              <article class="lf-glass lf-log-hero lf-glass--grow" aria-labelledby="lfLogTitle">
+                <div class="lf-log-hero__head">
+                  <h2 id="lfLogTitle" class="lf-glass__h">Bitácora de ejecución</h2>
+                  <div class="lf-log-hero__btns">
+                    <button type="button" id="btnClearLog" class="lf-pro-btn lf-pro-btn--ghost">Vaciar</button>
+                    <button type="button" id="btnExportLog" class="lf-pro-btn lf-pro-btn--gold">Exportar JSON</button>
+                  </div>
+                </div>
+                <div class="lf-log-wrap lf-log-wrap--tall lf-log-scroll">
+                  <table class="lf-log lf-log--pro">
+                    <thead>
+                      <tr>
+                        <th>Hora</th>
+                        <th>Pos</th>
+                        <th>Estado</th>
+                        <th>Color</th>
+                        <th>Dist.</th>
+                        <th>Nota</th>
+                      </tr>
+                    </thead>
+                    <tbody id="logBody"></tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
+            <div class="lf-main-tab-panel" data-lf-main-panel="sim" role="tabpanel" id="lfMainPanelSim" aria-labelledby="lfSimTitle" hidden>
+              <article class="lf-glass lf-glass--grow lf-sim-hero" aria-labelledby="lfSimTitle">
+                <div class="lf-sim-hero__head">
+                  <div>
+                    <h2 id="lfSimTitle" class="lf-glass__h">Simulador del laberinto físico</h2>
+                    <p class="lf-glass__hint lf-sim-lead">
+                      El <strong>terreno inferior</strong> es el «mundo verdadero»: colores como el TCS (verde <strong>meta</strong> · azul paso · rojo muro).
+                      El <strong>mapa interno encima</strong> sigue siendo la memoria del PC; <code>LEER</code> solo ve lo que pintes abajo cuando la simulación está encendida.
+                    </p>
+                  </div>
+                  <label class="lf-check lf-check--pro lf-sim-enable">
+                    <input type="checkbox" id="lfSimEnabled" aria-describedby="lfSimHint" />
+                    Activar simulación (sin ESP32)
+                  </label>
+                </div>
+                <p id="lfSimHint" class="lf-glass__hint">
+                  Cuando está activo, <code>/api/leer</code> y <code>/api/mover</code> no tocan red: mismo flujo que en carrito (<strong>Retroceso en ROJO</strong> incluido). IP puede quedar vacía.
+                </p>
+                <div class="lf-sim-controls">
+                  <label class="lf-mini-field lf-sim-field">
+                    <span>Retardo simulado (ms)</span>
+                    <input type="number" id="lfSimDelayMs" min="0" max="800" step="5" value="40" title="Breve pausa para ver pasos tipo TCP" class="lf-input-pro" />
+                  </label>
+                  <label class="lf-check lf-check--pro">
+                    <input type="checkbox" id="lfSimUltraSense" checked />
+                    Ultrasonido simulado: eco corto si el frente es muro/rojo
+                  </label>
+                </div>
+                <div class="lf-sim-toolbar" role="toolbar" aria-label="Pincel del terreno simulado">
+                  <span class="lf-sim-toolbar__label">Pincel</span>
+                  <button type="button" class="lf-pro-btn lf-pro-btn--soft lf-sim-brush" data-lf-sim-brush="VERDE" title="Una sola celda meta (sensor verde)">Meta (verde)</button>
+                  <button type="button" class="lf-pro-btn lf-pro-btn--soft lf-sim-brush lf-sim-brush--active" data-lf-sim-brush="AZUL">Libre (azul)</button>
+                  <button type="button" class="lf-pro-btn lf-pro-btn--soft lf-sim-brush" data-lf-sim-brush="ROJO">Muro / rojo</button>
+                </div>
+                <div class="lf-sim-actions">
+                  <button type="button" id="btnLfSimMaze" class="lf-pro-btn lf-pro-btn--primary">Laberinto perfecto aleatorio</button>
+                  <button type="button" id="btnLfSimFlat" class="lf-pro-btn lf-pro-btn--secondary">Todo pasillo · meta = Meta X/Y</button>
+                  <button type="button" id="btnLfSimSnapRobot" class="lf-pro-btn lf-pro-btn--soft">Robot → primera celda azul</button>
+                  <button type="button" id="btnLfSimRevealMap" class="lf-pro-btn lf-pro-btn--soft" title="Copia el terreno al mapa de conocimiento (útil para probar grafos ya informados)">Mapa ⇐ terreno (revelar)</button>
+                </div>
+                <div class="lf-map-scene lf-map-scene--sim">
+                  <div class="lf-map-frame lf-map-frame--sim">
+                    <div id="lfSimTerrainGrid" class="lf-map-grid lf-map-grid--xl lf-map-grid--sim-floor" aria-label="Terreno simulado para TCS"></div>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="lf-pro-rail">
+        <nav class="lf-rail-tabs" role="tablist" aria-label="Configuración del laboratorio">
+          <button type="button" class="lf-rail-tab lf-rail-tab--active" role="tab" aria-selected="true" data-lf-rail-tab="conn">Red</button>
+          <button type="button" class="lf-rail-tab" role="tab" aria-selected="false" data-lf-rail-tab="pose">Pose</button>
+          <button type="button" class="lf-rail-tab" role="tab" aria-selected="false" data-lf-rail-tab="tcs">Calibración</button>
+          <button type="button" class="lf-rail-tab" role="tab" aria-selected="false" data-lf-rail-tab="agent">Agente</button>
+        </nav>
+        <div class="lf-rail-panels">
+          <div class="lf-rail-panel lf-rail-panel--active" data-lf-rail-panel="conn" role="tabpanel" id="lfRailPanelConn" aria-labelledby="lfConnTitle">
+            <article class="lf-glass" aria-labelledby="lfConnTitle">
+              <h2 id="lfConnTitle" class="lf-glass__h">Red</h2>
+              <p class="lf-glass__hint">Un cliente TCP a la vez · si falla un comando, pausá el otro panel (<code>LEER</code> continuo / ping).</p>
+              <div class="lf-field-stack lf-field-stack--narrow">
+                <label class="lf-floating-label">
+                  <span>IP ESP32</span>
+                  <input type="text" id="host" placeholder="192.168.x.x · 10.x.x.x" autocomplete="off" spellcheck="false" class="lf-input-pro" />
+                </label>
+                <label class="lf-floating-label">
+                  <span>Puerto</span>
+                  <input type="number" id="port" value="8888" min="1" max="65535" class="lf-input-pro" />
+                </label>
+              </div>
+              <div
+                id="lfPingLive"
+                class="lf-ping-live lf-ping-live--idle"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                title="Relay Flask /api/ping · PING→PONG TCP al ESP32 (no es ICMP de Windows)"
+              >
+                <span class="lf-ping-live__pulse" aria-hidden="true"></span>
+                <div class="lf-ping-live__text">
+                  <span class="lf-ping-live__kicker">Ping TCP · PONG</span>
+                  <span id="lfPingMs" class="lf-ping-live__ms">—</span>
+                  <span id="lfPingCaption" class="lf-ping-live__cap">Sin IP</span>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="lf-rail-panel" data-lf-rail-panel="pose" role="tabpanel" id="lfRailPanelPose" aria-labelledby="lfPoseTitle" hidden>
+            <article class="lf-glass" aria-labelledby="lfPoseTitle">
+              <h2 id="lfPoseTitle" class="lf-glass__h">Pose · meta · fusión</h2>
+              <p class="lf-glass__hint">Origen (0,0) arriba-izquierda. Norte = <strong>y − 1</strong>.</p>
+              <div class="lf-pose-grid">
+                <label class="lf-mini-field"><span>Robot X</span><input type="number" id="robotX" min="0" max="31" value="0" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Robot Y</span><input type="number" id="robotY" min="0" max="31" value="0" class="lf-input-pro" /></label>
+                <label class="lf-mini-field lf-mini-field--wide"><span>Orientación</span>
+                  <select id="robotH" aria-label="Heading" class="lf-input-pro lf-select-full">
+                    <option value="0">Norte ↑</option>
+                    <option value="1">Este →</option>
+                    <option value="2">Sur ↓</option>
+                    <option value="3">Oeste ←</option>
+                  </select>
+                </label>
+                <label class="lf-mini-field"><span>Meta X</span><input type="number" id="goalX" min="0" max="31" value="7" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Meta Y</span><input type="number" id="goalY" min="0" max="31" value="7" class="lf-input-pro" /></label>
+                <label class="lf-mini-field lf-mini-field--wide"><span>Umbral ultrasonido (cm)</span>
+                  <input type="number" id="ultraThresh" min="1" max="80" value="15" title="Menor valor = obstáculo frontal" class="lf-input-pro" />
+                </label>
+              </div>
+              <p class="lf-glass__hint lf-pose-pulse-remind">
+                Pulsos <code>MOVER</code> en <strong>ms por dirección</strong>: pestaña <strong>Calibración</strong> (compartidos con <em>Control manual</em> en este navegador).
+              </p>
+              <div class="lf-toggle-stack">
+                <label class="lf-check lf-check--pro"><input type="checkbox" id="unknownAsFree" /> Desconocido transitable al planificar</label>
+                <label class="lf-check lf-check--pro"><input type="checkbox" id="autoReplan" checked /> Replan si hay obstáculo nuevo (4–5)</label>
+              </div>
+            </article>
+          </div>
+
+          <div class="lf-rail-panel" data-lf-rail-panel="tcs" role="tabpanel" id="lfRailPanelTcs" aria-labelledby="lfCalRailTitle" hidden>
+            <article class="lf-glass lf-glass--cal" aria-labelledby="lfCalRailTitle">
+              <h2 id="lfCalRailTitle" class="lf-glass__h">Calibración</h2>
+
+              <h3 id="lfTcsCalTitle" class="lf-cal-subtitle">Sensor TCS34725</h3>
+              <p class="lf-glass__hint">
+                Umbrales en el <strong>ESP32</strong> (firmware con comando <code>TCS_CAL:</code>). Tras <strong>Leer sensores</strong> cargá los valores desde el JSON (<code>thresh</code>).
+              </p>
+              <div class="lf-pose-grid lf-tcs-cal-grid">
+                <label class="lf-mini-field"><span>Clear mín. (cmin)</span><input type="number" id="lfTcsCmin" min="0" max="4095" value="40" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>pb (azul)</span><input type="number" id="lfTcsPb" min="0" max="1" step="0.01" value="0.36" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>pg (verde)</span><input type="number" id="lfTcsPg" min="0" max="1" step="0.01" value="0.36" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>pr (rojo)</span><input type="number" id="lfTcsPr" min="0" max="1" step="0.01" value="0.40" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Gap débil (wg)</span><input type="number" id="lfTcsWg" min="0" max="1" step="0.001" value="0.012" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Mín. dominante (wd)</span><input type="number" id="lfTcsWd" min="0" max="1" step="0.001" value="0.318" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Blanco CLEAR gen. (blc)</span><input type="number" id="lfTcsBlc" min="0" max="4095" value="140" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Blanco CLEAR puro (blcp)</span><input type="number" id="lfTcsBlcp" min="0" max="4095" value="520" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Blanco desvío gen. (bdg)</span><input type="number" id="lfTcsBdg" min="0" max="1" step="0.001" value="0.055" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Blanco desvío puro (bdp)</span><input type="number" id="lfTcsBdp" min="0" max="1" step="0.001" value="0.028" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Blanco sat. gen. (bsg)</span><input type="number" id="lfTcsBsg" min="0" max="1" step="0.001" value="0.098" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Blanco sat. puro (bsp)</span><input type="number" id="lfTcsBsp" min="0" max="1" step="0.001" value="0.042" class="lf-input-pro" /></label>
+              </div>
+              <div class="lf-toolbar lf-toolbar--pro lf-tcs-cal-actions">
+                <button type="button" id="btnTcsCalLoadFromLeer" class="lf-pro-btn lf-pro-btn--soft">Cargar desde último LEER</button>
+                <button type="button" id="btnTcsCalSend" class="lf-pro-btn lf-pro-btn--primary">Enviar al ESP32</button>
+              </div>
+
+              <hr class="lf-cal-divider" />
+
+              <h3 class="lf-cal-subtitle">Pulsos MOVER (ms por dirección)</h3>
+              <p class="lf-glass__hint">
+                Cada <code>MOVER:*</code> del agente y del plan usa el <strong>ms</strong> de la fila correspondiente. Comparte almacenamiento con <strong>Control manual</strong> (navegador). Adelante/atrás: ~30&nbsp;cm por celda; giros suelen llevar otros tiempos.
+              </p>
+              <div class="lf-move-pulse-grid" role="group" aria-label="Milisegundos por dirección">
+                <label class="lf-mini-field"><span>Arriba · adelante</span><input type="number" id="lfPulseMsAdelante" data-lf-pulse-dir="adelante" min="50" max="60000" step="10" value="350" inputmode="numeric" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Abajo · atrás</span><input type="number" id="lfPulseMsAtras" data-lf-pulse-dir="atras" min="50" max="60000" step="10" value="350" inputmode="numeric" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Izquierda</span><input type="number" id="lfPulseMsIzquierda" data-lf-pulse-dir="izquierda" min="50" max="60000" step="10" value="350" inputmode="numeric" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Derecha</span><input type="number" id="lfPulseMsDerecha" data-lf-pulse-dir="derecha" min="50" max="60000" step="10" value="350" inputmode="numeric" class="lf-input-pro" /></label>
+              </div>
+              <p id="lfCellMoveMsHint" class="lf-glass__hint lf-pro-mono lf-cell-move-hint" aria-live="polite"></p>
+              <p class="lf-pulse-sync-row">
+                <button type="button" id="btnLfPulseSyncAll" class="lf-pro-btn lf-pro-btn--soft" title="Copia el valor de Arriba a las otras tres direcciones">Igualar todo a «Arriba»</button>
+              </p>
+
+              <details class="lf-drift-note">
+                <summary class="lf-drift-note__sum">¿Pierde rectitud o se va torcido?</summary>
+                <div class="lf-drift-note__body">
+                  <p><strong>1. Calibración por lado:</strong> probá más <em>Control manual</em> y ajustá ms por dirección hasta que recto/giros coincidan con la grilla (un lado más largo = menos ms si se pasa del cuadro, o más ms si llega corto).</p>
+                  <p><strong>2. Mecánica:</strong> ruedas o goma desgastada, diferencia de diámetro, un motor más «fuerte», rodadura irregular o chasis torcido; revisá tensión del eje y que el peso sea simétrico.</p>
+                  <p><strong>3. Eléctrica / L298N:</strong> mismo PWM nominal pero motores distintos; algunos proyectos aplican corrección PWM por motor en firmware (ENA/ENB distintos) — este panel solo afiná tiempos de pulso por comando.</p>
+                  <p><strong>4. Superficie:</strong> fibras/resbalón hacen girar mejor un lado; probá mismo suelo donde correrá el laberinto.</p>
+                </div>
+              </details>
+            </article>
+          </div>
+
+          <div class="lf-rail-panel" data-lf-rail-panel="agent" role="tabpanel" id="lfRailPanelAgent" aria-labelledby="lfAgentTitle" hidden>
+        <article class="lf-glass lf-glass--accent" aria-labelledby="lfAgentTitle">
+          <h2 id="lfAgentTitle" class="lf-glass__h">Agente &amp; planificación</h2>
+          <p class="lf-glass__hint lf-agent-lead">
+            Cada paso = <strong>LEER</strong> (TCS + distancia) + <strong>MOVER</strong>. Grafos BFS / A* / DFS / Greedy en modos <strong>3–5</strong> solamente.
+          </p>
+          <details class="lf-agent-guide">
+            <summary class="lf-agent-guide__sum">Pasos recomendados · checklist</summary>
+            <ol class="lf-agent-steps" aria-label="Pasos para ejecutar el agente">
+              <li><strong>Red + ping</strong> cuando el robot esté idle (un socket TCP).</li>
+              <li><strong>Pose / meta</strong> alineadas con la grilla · clic = meta.</li>
+              <li><strong>Ms por dirección</strong> en Calibración (30×30&nbsp;cm y giros).</li>
+              <li><strong>Modo 1:</strong> cargar cola programada.</li>
+              <li><strong>Modos 4–5:</strong> mapa desconocido → opción transitable o LEER en azul o suelo meta (verde).</li>
+              <li><strong>▶ Autonomía</strong> o un <strong>Paso de agente</strong>.</li>
+            </ol>
+          </details>
+          <div class="lf-field-stack">
+            <label class="lf-floating-label">
+              <span>Convención color (TCS34725)</span>
+              <select id="colorPreset" class="lf-input-pro lf-select-full" title="Mapeo fijo al mapa interno">
+                <option value="rgb3060" selected>Verde=meta · Azul=disponible · Rojo=peligro (sin blanco)</option>
+              </select>
+            </label>
+            <label class="lf-floating-label">
+              <span>Modo de comportamiento</span>
+              <select id="agentMode" class="lf-input-pro lf-select-full" aria-describedby="agentHint">
+                <option value="1">1 · Programado · cola TCP fija · sin grafos</option>
+                <option value="2">2 · Reactivo · reglas locales · sin grafos</option>
+                <option value="3">3 · Explora · encuentra rutas hasta «desconocido» transitables · usa algoritmo</option>
+                <option value="4" selected>4 · Objetivos · plan hasta meta fija cada ciclo · usa algoritmo</option>
+                <option value="5">5 · Utilidad (demo) · mismo plan que 4 · usa algoritmo</option>
+                <option value="6">6 · Aprendizaje demo · pasos locales · sin grafos</option>
+              </select>
+            </label>
+            <label class="lf-floating-label" id="lfSearchAlgoLabel">
+              <span>Algoritmo de búsqueda en grilla</span>
+              <select id="searchAlgo" class="lf-input-pro lf-select-full" aria-label="Algoritmo de búsqueda" title="Disponible en modos 3, 4 y 5">
+                <option value="bfs">BFS</option>
+                <option value="astar" selected>A*</option>
+                <option value="dfs">DFS</option>
+                <option value="greedy">Greedy</option>
+              </select>
+            </label>
+          </div>
+          <div class="lf-programmed-block" id="programmedBlock">
+            <label class="lf-floating-label" for="programmedSeq"><span>Cola programada</span></label>
+            <textarea id="programmedSeq" rows="4" class="lf-textarea lf-textarea--pro" spellcheck="false">adelante
+derecha
+adelante</textarea>
+            <button type="button" id="btnLoadProgram" class="lf-pro-btn lf-pro-btn--soft">Cargar cola</button>
+          </div>
+          <p class="lf-agent-hint" id="agentHint"></p>
+          <div class="lf-autorun-bar" role="group" aria-label="Autonomía del agente">
+            <button type="button" id="btnAutorunStart" class="lf-pro-btn lf-pro-btn--go">▶ Iniciar autonomía</button>
+            <button type="button" id="btnAutorunStop" class="lf-pro-btn lf-pro-btn--stop" disabled>■ Detener</button>
+            <label class="lf-autorun-delay">
+              <span>Pausa entre pasos</span>
+              <select id="autorunDelay" class="lf-input-pro lf-select-full" aria-label="Milisegundos entre cada paso autónomo">
+                <option value="400">0,4 s</option>
+                <option value="800" selected>0,8 s</option>
+                <option value="1200">1,2 s</option>
+                <option value="2000">2 s</option>
+                <option value="3500">3,5 s</option>
+              </select>
+            </label>
+          </div>
+          <p id="autorunStatus" class="lf-autorun-status" aria-live="polite"></p>
+          <div class="lf-action-grid">
+            <button type="button" id="btnPlan" class="lf-pro-btn lf-pro-btn--secondary">Calcular ruta</button>
+            <button type="button" id="btnStepAgent" class="lf-pro-btn lf-pro-btn--primary">Paso de agente</button>
+            <button type="button" id="btnExecOne" class="lf-pro-btn lf-pro-btn--secondary">1× TCP cola</button>
+            <button type="button" id="btnClearPlan" class="lf-pro-btn lf-pro-btn--ghost">Vaciar plan</button>
+          </div>
+          <pre id="planPreview" class="lf-plan-preview lf-plan-preview--pro" aria-live="polite"></pre>
+        </article>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='laberinto_fisico.js') }}"></script>
+</body>
+</html>

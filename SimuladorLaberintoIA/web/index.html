@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulador Laberinto IA — Proyecto 2026</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>Simulador de Laberinto — Agente Inteligente</h1>
+      <p class="subtitle">Proyecto Final IA 2026 · 8×8 · Búsqueda y tipos de agente</p>
+    </header>
+
+    <main class="main">
+      <section class="grid-section">
+        <div id="grid" class="grid" role="grid" aria-label="Laberinto 8 por 8"></div>
+        <div id="agent" class="agent" aria-hidden="true"></div>
+        <div id="viewport3d" class="viewport-3d" aria-hidden="true"></div>
+      </section>
+
+      <aside class="panel">
+        <div class="panel-block">
+          <h2 class="panel-title">Colores</h2>
+          <ul class="legend" aria-label="Leyenda de colores">
+            <li><span class="swatch swatch-start"></span> Verde = Inicio</li>
+            <li><span class="swatch swatch-path"></span> Blanco = Camino</li>
+            <li><span class="swatch swatch-wall"></span> Rojo = Pared/Obst.</li>
+            <li><span class="swatch swatch-goal"></span> Azul = Objetivo</li>
+          </ul>
+        </div>
+
+        <div class="panel-block">
+          <h2 class="panel-title">Métricas</h2>
+          <div id="metrics" class="metrics"></div>
+        </div>
+
+        <div class="panel-block" id="learning-block">
+          <h2 class="panel-title">Aprendizaje del agente</h2>
+          <p class="hint">Solo para el agente que aprende (Q-learning)</p>
+          <canvas id="learning-chart" width="280" height="120"></canvas>
+        </div>
+
+        <div class="panel-block">
+          <h2 class="panel-title">Editar laberinto</h2>
+          <p class="hint">Clic en una celda (con simulación parada)</p>
+          <div class="toolbar">
+            <button type="button" class="tool-btn active" data-tool="wall" title="Pared/Obstáculo">Pared</button>
+            <button type="button" class="tool-btn" data-tool="path">Camino</button>
+            <button type="button" class="tool-btn" data-tool="start">Inicio</button>
+            <button type="button" class="tool-btn" data-tool="goal">Objetivo</button>
+          </div>
+          <button type="button" id="btn-default" class="btn btn-secondary">Lab. por defecto</button>
+        </div>
+
+        <div class="panel-block">
+          <label for="agent-type" class="label">Tipo de agente</label>
+          <select id="agent-type" class="select">
+            <option value="programado">1. Sistema programado</option>
+            <option value="reactivo">2. Reactivo simple</option>
+            <option value="modelo">3. Basado en modelo</option>
+            <option value="objetivos">4. Basado en objetivos</option>
+            <option value="utilidad">5. Basado en utilidad</option>
+            <option value="aprende">6. Agente que aprende</option>
+          </select>
+        </div>
+
+        <div class="panel-block" id="search-block">
+          <label for="search-method" class="label">Método de búsqueda</label>
+          <select id="search-method" class="select">
+            <option value="astar">A*</option>
+            <option value="bfs">BFS</option>
+          </select>
+        </div>
+
+        <div class="panel-actions">
+          <button type="button" id="btn-start" class="btn btn-primary">Iniciar</button>
+          <button type="button" id="btn-reset" class="btn btn-outline">Reiniciar</button>
+        </div>
+      </aside>
+    </main>
+  </div>
+  <script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Simulador Laberinto IA - Proyecto Final 2026
+# Python 3.8+
+
+pygame>=2.5.0
