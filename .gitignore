@@ -1,6 +1,3 @@
-# Credenciales Wi‑Fi / firmware (usar secrets.h.example)
-FirmwareRobotLaberinto/secrets.h
-
 # Python
 __pycache__/
 *.py[cod]
