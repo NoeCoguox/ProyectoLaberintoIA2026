@@ -637,7 +637,7 @@ if __name__ == "__main__":
     pid = os.getpid()
     url = f"http://127.0.0.1:{WEB_UI_PORT}/"
     print(f"Panel web: {url}")
-    print(f"PID de este proceso: {pid}  →  Ctrl+C aquí debe detener el servidor.")
+    print(f"PID de este proceso: {pid}  ->  Ctrl+C aqui debe detener el servidor.")
     print(
         f"Si el navegador sigue sirviendo la página después de cerrar CMD, "
         f"hay otro Python u otra sesión ocupando el puerto. "

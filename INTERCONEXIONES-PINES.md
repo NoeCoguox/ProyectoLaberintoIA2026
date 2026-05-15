@@ -24,6 +24,7 @@ Fuente principal: comentarios y `#define` en `FirmwareRobotLaberinto/FirmwareRob
 | **4** | Servo señal PWM |
 | **33** | Buzzer pasivo (PWM ~2.5 kHz; continuo cuando `CELDA=ROJO`) |
 | **21, 22** | I2C → TCS34725 (SDA, SCL) |
+| **34, 35** | FC-03 encoder (DO digital) — llanta A / llanta B (`USE_WHEEL_ENCODERS` en firmware; VCC FC-03 a **3V3**) |
 | **3V3, GND, VIN** | Según placa: 3V3/GND a sensores; alimentación del ESP32 por USB o VIN según montaje |
 
 ---
@@ -44,6 +45,8 @@ Fuente principal: comentarios y `#define` en `FirmwareRobotLaberinto/FirmwareRob
 | **33** | Buzzer pasivo | Señal + (ideal 100–220 Ω en serie); otro polo GND |
 | **21** | TCS34725 | SDA (I2C) |
 | **22** | TCS34725 | SCL (I2C) |
+| **34** | FC-03 (llanta motor A / L298N canal A) | **DO** (señal; **VCC del módulo a 3V3** del ESP32 para nivel lógico 3,3 V) |
+| **35** | FC-03 (llanta motor B) | **DO** |
 
 **GND común:** ESP32, L298N (lógica), HC-SR04, servo, TCS34725 y retorno de la alimentación de motores deben compartir referencia de masa según tu esquema de alimentación.
 
@@ -119,7 +122,22 @@ El firmware emite PWM continuo (**`BUZZER_FREQ_HZ`**, por defecto 2,5 kHz) en **
 
 ---
 
-## 6. Diagrama lógico (quién va a quién)
+## 6. Encoders FC-03 (fotorranura / “encoder” de pulsos, un módulo por llanta)
+
+Usa el pin **DO** (salida digital del comparador). **AO** no hace falta para contar pulsos. El firmware cuenta flancos en **CHANGE** y en **`MOVER:ADELANTE` / `MOVER:ATRAS`** baja el PWM del lado que va más rápido (más pulsos que el otro) para tender a ir recto.
+
+| FC-03 | ESP32 |
+|-------|-------|
+| **VCC** | **3V3** del ESP32 (así **DO** suele ser lógica 3,3 V segura en GPIO **34** y **35**; si alimentás el FC-03 a 5 V, comprobá que **DO** no exceda 3,3 V en el pin del ESP32) |
+| **GND** | **GND** común |
+| **DO** | **GPIO34** (llanta del **motor canal A** / L298N lado A) o **GPIO35** (llanta **motor B**) — ver `ENCODER_WHEEL_*` en el `.ino` |
+| **AO** | (no usar) |
+
+**Mecánica:** necesitás un disco con agujeros (o pestañas) que corte la ranura IR del FC-03 cuando la rueda gira; sin eso no hay pulsos y no hay corrección.
+
+---
+
+## 7. Diagrama lógico (quién va a quién)
 
 ```mermaid
 flowchart LR
@@ -150,7 +168,7 @@ flowchart LR
 
 ---
 
-## 7. Simulador Wokwi (`diagram.json`)
+## 8. Simulador Wokwi (`diagram.json`)
 
 El modelo `wokwi-esp32-devkit-v1` representa el DevKit estándar; los **GPIO del JSON son los mismos** que debes usar en la placa **física de 38 pines (v1.3)** (serigrafía **IOxx**).
 

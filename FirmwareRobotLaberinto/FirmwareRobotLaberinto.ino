@@ -37,6 +37,13 @@
  *   El firmware lo pone en HIGH mientras gire cualquier canal (mismos flags que moving/movingA/movingB).
  *   Pon MOTOR_ACTIVITY_LED_PIN en -1 si no usás LED. Podés cambiar el pin con #define MOTOR_ACTIVITY_LED_PIN ...
  *
+ * ----- Encoders FC-03 (ranura IR, pin DO) — uno por llanta; rectifica PWM en MOVER:ADELANTE / ATRAS -----
+ *   Llanta motor A (L298N canal A) -> DO del FC-03 -> GPIO34  ·  Llanta B -> DO -> GPIO35
+ *   FC-03: VCC preferible 3V3 del ESP32 (DO entonces 3,3 V); GND comun; AO no usar.
+ *   Disco con agujeros en el eje: mas pulsos = mas correccion. MOVER:* equilibra PWM entre llantas.
+ *   Si torcido al reves: ENCODER_SWAP_AB 1
+ *   Sin encoders: #define USE_WHEEL_ENCODERS 0 antes de compilar.
+ *
  * ----- Sensor de color TCS34725 (chip TCS34725, p. ej. módulo Adafruit o clon I2C) -----
  * El sensor mira hacia el suelo del laberinto. I2C por defecto en ESP32: SDA=GPIO21, SCL=GPIO22.
  *
@@ -93,6 +100,23 @@ WiFiClient client;
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 60000;
 const unsigned long WIFI_RECONNECT_INTERVAL_MS = 5000;
 
+// ---------- Wi-Fi: IP fija (opcional) ----------
+// Pon USE_STATIC_IP en 0 para usar DHCP del router.
+#ifndef USE_STATIC_IP
+#define USE_STATIC_IP 1
+#endif
+#if USE_STATIC_IP
+#ifndef STATIC_IP_OCTETS
+#define STATIC_IP_OCTETS 192, 168, 1, 2
+#endif
+#ifndef STATIC_GW_OCTETS
+#define STATIC_GW_OCTETS 192, 168, 1, 1
+#endif
+#ifndef STATIC_SN_OCTETS
+#define STATIC_SN_OCTETS 255, 255, 255, 0
+#endif
+#endif
+
 // ========== PINES MOTORES (L298N) ==========
 #define MOTOR_A_IN1 12
 #define MOTOR_A_IN2 13
@@ -134,6 +158,28 @@ const unsigned long WIFI_RECONNECT_INTERVAL_MS = 5000;
 #define TRIG 5
 #define ECHO 18
 
+// ========== Encoders FC-03 (DO digital, ranura IR) — equilibrio en MOVER:ADELANTE|ATRAS|IZQ|DER ==========
+#ifndef USE_WHEEL_ENCODERS
+#define USE_WHEEL_ENCODERS 1
+#endif
+#if USE_WHEEL_ENCODERS
+#ifndef ENCODER_WHEEL_A_DO_PIN
+#define ENCODER_WHEEL_A_DO_PIN 34
+#endif
+#ifndef ENCODER_WHEEL_B_DO_PIN
+#define ENCODER_WHEEL_B_DO_PIN 35
+#endif
+#ifndef ENCODER_SWAP_AB
+#define ENCODER_SWAP_AB 0
+#endif
+#ifndef ENCODER_STRAIGHT_ADJ_MS
+#define ENCODER_STRAIGHT_ADJ_MS 35
+#endif
+#ifndef ENCODER_MIN_TOTAL_EDGES
+#define ENCODER_MIN_TOTAL_EDGES 8
+#endif
+#endif
+
 // ========== SERVO 180° (orientación del ultrasonido) ==========
 #define SERVO_PIN 4
 // Ángulo que consideras "frente" del robot (ajusta si el sensor no queda centrado mecánicamente)
@@ -159,9 +205,15 @@ unsigned long g_lastServoAngReportMs = 0;
 
 // ========== SENSOR DE COLOR TCS34725 (I2C) — solo suelo / CELDA; sin usar DIST ==========
 #if USE_COLOR_SENSOR
-// 154 ms + ganancia 60x: mas fotones integrados y maxima amplificacion = objetivo util ~8-10 cm al suelo
-// (a muy poca distancia puede saturar; si pasa, bajar a GAIN_16X o 4X en el constructor)
-Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_154MS, TCS34725_GAIN_60X);
+// Integracion y ganancia: antes de compilar, podes cambiar TCS_IT / TCS_GAIN abajo si CELDA sale UNKNOWN
+// o los RGB saturan (papel muy cerca). Objetivo util ~8-12 cm al suelo, LED blanco del modulo encendido.
+#ifndef TCS34725_INTEGRATION_ENUM
+#define TCS34725_INTEGRATION_ENUM TCS34725_INTEGRATIONTIME_154MS
+#endif
+#ifndef TCS34725_GAIN_ENUM
+#define TCS34725_GAIN_ENUM TCS34725_GAIN_60X
+#endif
+Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATION_ENUM, TCS34725_GAIN_ENUM);
 #endif
 bool hasColorSensor = false;
 
@@ -184,10 +236,20 @@ bool hasColorSensor = false;
 /** Prueba direcciones I2C habituales del TCS34725 (Wire.begin ya ejecutado). */
 bool tryBeginTcs34725() {
   if (tcs.begin(0x29)) {
+    delay(250);
+    {
+      uint16_t r, g, b, c;
+      tcs.getRawData(&r, &g, &b, &c);
+    }
     return true;
   }
   delay(15);
   if (tcs.begin(0x39)) {
+    delay(250);
+    {
+      uint16_t r, g, b, c;
+      tcs.getRawData(&r, &g, &b, &c);
+    }
     return true;
   }
   return false;
@@ -227,6 +289,11 @@ bool movingA = false;
 bool movingB = false;
 unsigned long motorAEndTime = 0;
 unsigned long motorBEndTime = 0;
+#if USE_WHEEL_ENCODERS
+volatile uint32_t g_encCountA = 0;
+volatile uint32_t g_encCountB = 0;
+static unsigned long g_encLastAdjustMs = 0;
+#endif
 String currentCommand = "";
 unsigned long lastWifiReconnectAttempt = 0;
 bool tcpServerStarted = false;
@@ -296,8 +363,8 @@ String nombreColorHumano(const String& celda) {
 }
 
 #if USE_COLOR_SENSOR
-/** Clear C minimo: a mas altura/distancia al papel la reflexion es debil; ~40 suele permitir ~8-10 cm (calibrar). */
-#define TCS34725_CLEAR_MIN 40U
+/** Clear C minimo: si CELDA queda UNKNOWN y en serie ves "C-baja", acerca el sensor, ilumina mas o baja cmin (TCP TCS_CAL:cmin=15). */
+#define TCS34725_CLEAR_MIN 22U
 /** Umbral minimo de proporcion del canal dominante (sobre R+G+B) para regla "fuerte". Simetrico R/G/B. */
 #define TCS_PR_ROJO 0.39f
 #define TCS_PG_VERDE 0.39f
@@ -603,6 +670,149 @@ static void buzzerPasivoInit() {
   analogWrite(BUZZER_PIN, 0);
 }
 
+#if USE_WHEEL_ENCODERS
+static void IRAM_ATTR encIsrA() {
+  g_encCountA++;
+}
+
+static void IRAM_ATTR encIsrB() {
+  g_encCountB++;
+}
+
+static void initWheelEncoders() {
+  pinMode(ENCODER_WHEEL_A_DO_PIN, INPUT);
+  pinMode(ENCODER_WHEEL_B_DO_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_WHEEL_A_DO_PIN), encIsrA, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_WHEEL_B_DO_PIN), encIsrB, CHANGE);
+  g_encLastAdjustMs = millis();
+}
+
+static void encoderResetCounts() {
+  noInterrupts();
+  g_encCountA = 0;
+  g_encCountB = 0;
+  interrupts();
+  g_encLastAdjustMs = millis();
+}
+
+/** Reaplica direccion de motores segun MOVER:* (1=adelante 2=atras 3=izq 4=der). */
+static void applyMoverPulseDirections(uint8_t kind) {
+  switch (kind) {
+    case 1:
+      motorApplyA(true);
+      motorApplyB(true);
+      break;
+    case 2:
+      motorApplyA(false);
+      motorApplyB(false);
+      break;
+    case 3:
+      motorApplyA(false);
+      motorApplyB(true);
+      break;
+    case 4:
+      motorApplyA(true);
+      motorApplyB(false);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * Equilibra PWM: la llanta con mas pulsos en el encoder va mas rapido -> se le baja PWM.
+ * Sirve para recto (adelante/atras) y para giros (izq/der: ambas ruedas deben girar parecido).
+ */
+static void updateEncoderBalancePwm() {
+  const uint8_t kind = g_moverPulseKind;
+  if (!moving || kind < 1 || kind > 4) {
+    return;
+  }
+  unsigned long now = millis();
+  if (now - g_encLastAdjustMs < (unsigned long)ENCODER_STRAIGHT_ADJ_MS) {
+    return;
+  }
+  g_encLastAdjustMs = now;
+  uint32_t ca;
+  uint32_t cb;
+  noInterrupts();
+  ca = g_encCountA;
+  cb = g_encCountB;
+  interrupts();
+#if ENCODER_SWAP_AB
+  {
+    uint32_t t = ca;
+    ca = cb;
+    cb = t;
+  }
+#endif
+  if ((uint32_t)(ca + cb) < (uint32_t)ENCODER_MIN_TOTAL_EDGES) {
+    return;
+  }
+  const int32_t diff = (int32_t)ca - (int32_t)cb;
+  const int base = constrain(PWM_SPEED, 0, 255);
+  const int trim = constrain(((int)labs((long)diff)) / 2, 1, 45);
+  const int slowPwm = max(1, base - trim);
+
+  applyMoverPulseDirections(kind);
+
+  if (diff == 0) {
+    analogWrite(ENA, base);
+    analogWrite(ENB, base);
+    return;
+  }
+  if (diff > 0) {
+    analogWrite(ENA, slowPwm);
+    analogWrite(ENB, base);
+  } else {
+    analogWrite(ENA, base);
+    analogWrite(ENB, slowPwm);
+  }
+}
+
+/** Post-giro: alinea ruedas con pulso corto adelante y equilibrio encoder si esta activo. */
+static void updateEncoderBalancePwmForwardOnly(int pwmBase) {
+  uint32_t ca;
+  uint32_t cb;
+  noInterrupts();
+  ca = g_encCountA;
+  cb = g_encCountB;
+  interrupts();
+#if ENCODER_SWAP_AB
+  {
+    uint32_t t = ca;
+    ca = cb;
+    cb = t;
+  }
+#endif
+  if ((uint32_t)(ca + cb) < (uint32_t)ENCODER_MIN_TOTAL_EDGES) {
+    motorApplyA(true);
+    motorApplyB(true);
+    analogWrite(ENA, pwmBase);
+    analogWrite(ENB, pwmBase);
+    return;
+  }
+  const int32_t diff = (int32_t)ca - (int32_t)cb;
+  const int base = constrain(pwmBase, 0, 255);
+  const int trim = constrain(((int)labs((long)diff)) / 2, 1, 40);
+  const int slowPwm = max(1, base - trim);
+  motorApplyA(true);
+  motorApplyB(true);
+  if (diff == 0) {
+    analogWrite(ENA, base);
+    analogWrite(ENB, base);
+  } else if (diff > 0) {
+    analogWrite(ENA, slowPwm);
+    analogWrite(ENB, base);
+  } else {
+    analogWrite(ENA, base);
+    analogWrite(ENB, slowPwm);
+  }
+}
+#else
+static void initWheelEncoders() {}
+#endif
+
 /** Ton continuo pasivo cuando ROJO; silencio en cualquier otro CELDA. */
 static void buzzerPasivoActualizarPorCelda(const String& celdaStr) {
   if (celdaStr == "ROJO") {
@@ -610,6 +820,25 @@ static void buzzerPasivoActualizarPorCelda(const String& celdaStr) {
   } else {
     analogWrite(BUZZER_PIN, 0);
   }
+}
+
+/** Llamar despues de WiFi.mode(WIFI_STA) y antes de cada WiFi.begin (incl. reconexion). */
+static void configureStaStaticIp() {
+#if USE_STATIC_IP
+  const IPAddress ip(STATIC_IP_OCTETS);
+  const IPAddress gw(STATIC_GW_OCTETS);
+  const IPAddress sn(STATIC_SN_OCTETS);
+  if (!WiFi.config(ip, gw, sn)) {
+    Serial.println(F("WiFi.config (IP fija) fallo."));
+  } else {
+    Serial.print(F("IP fija: "));
+    Serial.print(ip);
+    Serial.print(F("  GW: "));
+    Serial.print(gw);
+    Serial.print(F("  Mascara: "));
+    Serial.println(sn);
+  }
+#endif
 }
 
 void setup() {
@@ -628,6 +857,14 @@ void setup() {
   pinMode(TRIG, OUTPUT);
   pinMode(ECHO, INPUT);
   buzzerPasivoInit();
+  initWheelEncoders();
+#if USE_WHEEL_ENCODERS
+  Serial.print(F("Encoders FC-03: A=GPIO"));
+  Serial.print(ENCODER_WHEEL_A_DO_PIN);
+  Serial.print(F(" B=GPIO"));
+  Serial.print(ENCODER_WHEEL_B_DO_PIN);
+  Serial.println(F(" (equilibrio en MOVER adelante/atras/izq/der)"));
+#endif
   Serial.println(F("Buzzer ROJO en GPIO33 (solo suena con CELDA:ROJO)."));
 #if MOTOR_ACTIVITY_LED_PIN >= 0
   pinMode(MOTOR_ACTIVITY_LED_PIN, OUTPUT);
@@ -650,6 +887,7 @@ void setup() {
   Serial.println(F("Monitor angulo: SERVO_ANG cada 3 s (mismo ritmo que el bloque de sensores USB)."));
 
   WiFi.mode(WIFI_STA);
+  configureStaStaticIp();
   Serial.print(F("Conectando WiFi, red: "));
   Serial.println(WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -827,6 +1065,9 @@ void loop() {
       if ((endedMover == 3 || endedMover == 4) && settleMs > 0UL) {
         g_postTurnSettling = true;
         g_postTurnSettleEnd = millis() + settleMs;
+#if USE_WHEEL_ENCODERS
+        encoderResetCounts();
+#endif
         sendListoAhora = false;
 #if SERIAL_LOG_MOV
         Serial.print(F("[MOV] Post-giro ADELANTE "));
@@ -859,10 +1100,14 @@ void loop() {
   if (g_postTurnSettling) {
     {
       const int sp = constrain(POST_TURN_SETTLE_PWM, 0, 255);
+#if USE_WHEEL_ENCODERS
+      updateEncoderBalancePwmForwardOnly(sp);
+#else
       motorApplyA(true);
       motorApplyB(true);
       analogWrite(ENA, sp);
       analogWrite(ENB, sp);
+#endif
     }
     if (millis() >= g_postTurnSettleEnd) {
       stopMotors();
@@ -926,6 +1171,8 @@ void loop() {
       lastWifiReconnectAttempt = millis();
       Serial.println("WiFi desconectado; reconectando...");
       WiFi.disconnect();
+      WiFi.mode(WIFI_STA);
+      configureStaStaticIp();
       WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
       tcpServerStarted = false;
     }
@@ -973,6 +1220,10 @@ void sendHardwareReport() {
   client.println(String("PIN:") + String(BUZZER_PIN) + "=Buzzer pasivo PWM (alarma continua si CELDA=ROJO)");
   client.println(String("PIN:") + String(I2C_SDA) + "=I2C SDA (TCS34725 / bus)");
   client.println(String("PIN:") + String(I2C_SCL) + "=I2C SCL (TCS34725 / bus)");
+#if USE_WHEEL_ENCODERS
+  client.println(String("PIN:") + String(ENCODER_WHEEL_A_DO_PIN) + "=FC-03 DO encoder llanta A (motor L298N canal A)");
+  client.println(String("PIN:") + String(ENCODER_WHEEL_B_DO_PIN) + "=FC-03 DO encoder llanta B (motor L298N canal B)");
+#endif
 
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);
@@ -1044,21 +1295,33 @@ void processCommand(String cmd) {
 #endif
   if (cmdBase == "MOVER:ADELANTE") {
     g_moverPulseKind = 1;
+#if USE_WHEEL_ENCODERS
+    encoderResetCounts();
+#endif
     moveForward();
     moving = true;
     moveEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOVER:ATRAS") {
     g_moverPulseKind = 2;
+#if USE_WHEEL_ENCODERS
+    encoderResetCounts();
+#endif
     moveBackward();
     moving = true;
     moveEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOVER:IZQUIERDA") {
     g_moverPulseKind = 3;
+#if USE_WHEEL_ENCODERS
+    encoderResetCounts();
+#endif
     turnLeft();
     moving = true;
     moveEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOVER:DERECHA") {
     g_moverPulseKind = 4;
+#if USE_WHEEL_ENCODERS
+    encoderResetCounts();
+#endif
     turnRight();
     moving = true;
     moveEndTime = millis() + pulseMsForMove;
@@ -1214,6 +1477,9 @@ static void refreshMoverPulseOutputs(void) {
     default:
       break;
   }
+#if USE_WHEEL_ENCODERS
+  updateEncoderBalancePwm();
+#endif
 }
 
 void stopMotors() {

@@ -32,7 +32,9 @@ El firmware **solo usa números GPIO** (lo mismo en Wokwi `wokwi-esp32-devkit-v1
 | **33** | Buzzer pasivo **señal** (tono PWM continuo cuando la celda es **ROJO**) |
 | **21** | TCS34725 **SDA** |
 | **22** | TCS34725 **SCL** |
-| **GND** | Común: L298N, HC-SR04, servo, TCS34725, masa batería lógica |
+| **34** | FC-03 **DO** encoder llanta A (canal L298N A) |
+| **35** | FC-03 **DO** encoder llanta B |
+| **GND** | Común: L298N, HC-SR04, servo, TCS34725, encoders FC-03, masa batería lógica |
 | **3V3** | TCS34725 VIN/3V3 (lógica 3,3 V) |
 | **5 V** (pin de la placa, si existe) | Solo si tu esquema alimenta HC-SR04/servo desde rail 5 V **estable**; nunca alimentes motores desde el ESP32 |
 
