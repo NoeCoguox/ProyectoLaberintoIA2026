@@ -87,6 +87,14 @@
     izquierda: "lfPulseMsIzquierda",
     derecha: "lfPulseMsDerecha",
   };
+  const LF_ENC_IDS = {
+    adelante: "lfPulseEncAdelante",
+    atras: "lfPulseEncAtras",
+    izquierda: "lfPulseEncIzquierda",
+    derecha: "lfPulseEncDerecha",
+  };
+  const lfUseEncoderMovesEl = document.getElementById("lfUseEncoderMoves");
+  const lfEncoderCalHintEl = document.getElementById("lfEncoderCalHint");
 
   const lfMapGrid = document.getElementById("lfMapGrid");
   const lfGridWEl = document.getElementById("lfGridW");
@@ -1056,22 +1064,37 @@
     return getLfCellPulseMsForDir("adelante");
   }
 
+  function syncLfEncoderPrefsFromInputs() {
+    if (typeof RobotMoveCal === "undefined") return;
+    if (lfUseEncoderMovesEl) {
+      RobotMoveCal.setUseEncoderMoves(!!lfUseEncoderMovesEl.checked);
+    }
+    Object.keys(LF_ENC_IDS).forEach((d) => {
+      const el = document.getElementById(LF_ENC_IDS[d]);
+      if (el) RobotMoveCal.saveEncPulses(d, el.value);
+    });
+    Object.keys(LF_PULSE_IDS).forEach((d) => {
+      const el = document.getElementById(LF_PULSE_IDS[d]);
+      if (el) RobotMoveCal.saveMsMax(d, el.value);
+    });
+    if (lfEncoderCalHintEl && typeof RobotMoveCal !== "undefined") {
+      lfEncoderCalHintEl.textContent = RobotMoveCal.calibrationSummaryLine();
+    }
+  }
+
   function updateLfCellMoveHint() {
+    syncLfEncoderPrefsFromInputs();
     if (!lfCellMoveMsHint) return;
+    if (typeof RobotMoveCal !== "undefined" && RobotMoveCal.useEncoderMoves()) {
+      lfCellMoveMsHint.textContent = RobotMoveCal.calibrationSummaryLine();
+      return;
+    }
     const a = getLfCellPulseMsForDir("adelante");
     const t = getLfCellPulseMsForDir("atras");
     const iz = getLfCellPulseMsForDir("izquierda");
     const d = getLfCellPulseMsForDir("derecha");
     lfCellMoveMsHint.textContent =
-      "Actual (ms): ↑ " +
-      a +
-      " · ↓ " +
-      t +
-      " · ◀ " +
-      iz +
-      " · ▶ " +
-      d +
-      ". Giros suele necesitar otros tiempos que el avance.";
+      "Modo solo ms: ↑ " + a + " · ↓ " + t + " · ◀ " + iz + " · ▶ " + d;
   }
 
   function savePrefs() {
@@ -1089,6 +1112,7 @@
         const el = document.getElementById(LF_PULSE_IDS[k]);
         if (el) localStorage.setItem(LF_PULSE_LS[k], el.value);
       });
+      syncLfEncoderPrefsFromInputs();
       const lfSimE = document.getElementById("lfSimEnabled");
       const lfSimUltra = document.getElementById("lfSimUltraSense");
       const lfSimDel = document.getElementById("lfSimDelayMs");
@@ -1133,6 +1157,17 @@
         const saved = localStorage.getItem(LF_PULSE_LS[d]);
         el.value = saved != null && saved !== "" ? saved : baseMs;
       });
+      if (typeof RobotMoveCal !== "undefined") {
+        if (lfUseEncoderMovesEl) {
+          lfUseEncoderMovesEl.checked = RobotMoveCal.useEncoderMoves();
+        }
+        RobotMoveCal.DIRS.forEach((d) => {
+          const encEl = document.getElementById(LF_ENC_IDS[d]);
+          if (encEl) encEl.value = String(RobotMoveCal.getEncPulses(d));
+          const msEl = document.getElementById(LF_PULSE_IDS[d]);
+          if (msEl) msEl.value = String(RobotMoveCal.getMsMax(d));
+        });
+      }
       updateLfCellMoveHint();
       const am = localStorage.getItem("lfAgentMode");
       if (am && [...agentModeEl.options].some((o) => o.value === am)) agentModeEl.value = am;
@@ -1366,7 +1401,14 @@
     }
     let url =
       "/api/mover?host=" + encodeURIComponent(host) + "&port=" + port + "&dir=" + encodeURIComponent(dir);
-    if (dir !== "detener") url += "&ms=" + String(getLfCellPulseMsForDir(dir));
+    if (dir !== "detener") {
+      syncLfEncoderPrefsFromInputs();
+      if (typeof RobotMoveCal !== "undefined") {
+        url = RobotMoveCal.appendMoverQuery(url, dir);
+      } else {
+        url += "&ms=" + String(getLfCellPulseMsForDir(dir));
+      }
+    }
     const res = await fetch(url);
     return res.json();
   }
@@ -1440,7 +1482,14 @@
       }
 
       if (!skipListoBanner) {
-        msgEl.textContent = "MOVER " + dir + " — LISTO";
+        let banner = "MOVER " + dir + " — LISTO";
+        if (j.enc && typeof RobotMoveCal !== "undefined") {
+          const es = RobotMoveCal.formatEncStatus(j.enc);
+          if (es) banner += " · " + es;
+        } else if (j.move_mode === "encoder") {
+          banner += " · encoder E" + (j.pulses || "?");
+        }
+        msgEl.textContent = banner;
         msgEl.className = "msg ok";
       }
       setAgentState("Listo");
@@ -2178,16 +2227,39 @@
         savePrefs();
       });
   });
+  Object.keys(LF_ENC_IDS).forEach((k) => {
+    const el = document.getElementById(LF_ENC_IDS[k]);
+    if (el)
+      el.addEventListener("input", function () {
+        updateLfCellMoveHint();
+        savePrefs();
+      });
+  });
+  if (lfUseEncoderMovesEl) {
+    lfUseEncoderMovesEl.addEventListener("change", function () {
+      updateLfCellMoveHint();
+      savePrefs();
+    });
+  }
   const btnLfPulseSyncAll = document.getElementById("btnLfPulseSyncAll");
   if (btnLfPulseSyncAll) {
     btnLfPulseSyncAll.addEventListener("click", function () {
-      const root = document.getElementById(LF_PULSE_IDS.adelante);
-      if (!root) return;
-      const v = root.value;
-      ["atras", "izquierda", "derecha"].forEach((d) => {
-        const o = document.getElementById(LF_PULSE_IDS[d]);
-        if (o) o.value = v;
-      });
+      const rootMs = document.getElementById(LF_PULSE_IDS.adelante);
+      const rootEnc = document.getElementById(LF_ENC_IDS.adelante);
+      if (rootMs) {
+        const v = rootMs.value;
+        ["atras", "izquierda", "derecha"].forEach((d) => {
+          const o = document.getElementById(LF_PULSE_IDS[d]);
+          if (o) o.value = v;
+        });
+      }
+      if (rootEnc) {
+        const ve = rootEnc.value;
+        ["atras", "izquierda", "derecha"].forEach((d) => {
+          const o = document.getElementById(LF_ENC_IDS[d]);
+          if (o) o.value = ve;
+        });
+      }
       updateLfCellMoveHint();
       savePrefs();
     });

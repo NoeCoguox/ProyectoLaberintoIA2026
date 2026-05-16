@@ -97,10 +97,51 @@ def _tcp_error_retryable(err: str | None) -> bool:
     )
 
 
-def _move_cmd_timeout_s(ms_val: int | None) -> float:
+def _move_cmd_timeout_s(ms_val: int | None, pulses: int | None = None) -> float:
     """Espera TCP: pulso + margen; tope para no bloquear Flask demasiado."""
     base_ms = int(ms_val) if ms_val is not None else 5000
+    if pulses is not None and pulses > 0:
+        base_ms = max(base_ms, 8000)
     return min(TCP_MOVE_CMD_TIMEOUT_MAX_S, max(TCP_MOVE_CMD_TIMEOUT_S, base_ms / 1000.0 + 18.0))
+
+
+def parse_enc_from_raw_lines(lines: list[str]) -> dict:
+    """Parsea ENC:A=…:B=…:DIFF=… del firmware (tras MOVER o LEER)."""
+    out: dict = {
+        "active": False,
+        "a": None,
+        "b": None,
+        "diff": None,
+        "pwma": None,
+        "pwmb": None,
+        "target": None,
+    }
+    for line in lines:
+        u = line.upper()
+        if u == "ENC_ACTIVE:1":
+            out["active"] = True
+        if not u.startswith("ENC:"):
+            continue
+        m_a = re.search(r"A=(\d+)", line, re.I)
+        m_b = re.search(r"B=(\d+)", line, re.I)
+        m_d = re.search(r"DIFF=(-?\d+)", line, re.I)
+        m_pa = re.search(r"PWMA=(\d+)", line, re.I)
+        m_pb = re.search(r"PWMB=(\d+)", line, re.I)
+        m_t = re.search(r"TARGET=(\d+)", line, re.I)
+        if m_a:
+            out["a"] = int(m_a.group(1))
+        if m_b:
+            out["b"] = int(m_b.group(1))
+        if m_d:
+            out["diff"] = int(m_d.group(1))
+        if m_pa:
+            out["pwma"] = int(m_pa.group(1))
+        if m_pb:
+            out["pwmb"] = int(m_pb.group(1))
+        if m_t:
+            out["target"] = int(m_t.group(1))
+        out["active"] = True
+    return out
 
 
 def tcp_robot_command_retry(
@@ -488,7 +529,12 @@ def api_servo():
 
 @app.route("/api/mover")
 def api_mover():
-    """dir=adelante|atras|izquierda|derecha|detener — MOVER:* / DETENER. Opcional: ms=50..60000 → MOVER:ADELANTE:ms."""
+    """
+    dir=adelante|atras|izquierda|derecha|detener — MOVER:* / DETENER.
+    Modo tiempo (habitual): ms=50..60000 → MOVER:ADELANTE:3500
+    Modo pulsos (solo si firmware ENCODER_DRIVE_CONTROL=1): pulses + ms_max → MOVER:ADELANTE:E72:3500
+    La respuesta incluye ENC: (lectura) cuando el firmware tiene encoders.
+    """
     host = (request.args.get("host") or "").strip()
     port = request.args.get("port", type=int) or DEFAULT_PORT
     d = (request.args.get("dir") or "").strip().lower()
@@ -509,14 +555,42 @@ def api_mover():
         ), 400
 
     ms = request.args.get("ms", type=int)
-    if tcp_cmd != "DETENER" and ms is not None:
-        ms = max(50, min(60000, int(ms)))
-        tcp_cmd = f"{tcp_cmd}:{ms}"
+    ms_max = request.args.get("ms_max", type=int)
+    pulses = request.args.get("pulses", type=int)
+    move_mode = "detener" if tcp_cmd == "DETENER" else "ms"
 
+    if tcp_cmd != "DETENER":
+        if pulses is not None and pulses > 0:
+            pulses = max(1, min(65535, int(pulses)))
+            tcp_cmd = f"{tcp_cmd}:E{pulses}"
+            move_mode = "encoder"
+            if ms_max is not None:
+                ms_max = max(50, min(60000, int(ms_max)))
+                tcp_cmd = f"{tcp_cmd}:{ms_max}"
+            ms = ms_max
+        elif ms is not None:
+            ms = max(50, min(60000, int(ms)))
+            tcp_cmd = f"{tcp_cmd}:{ms}"
+
+    timeout_ms = ms_max if move_mode == "encoder" else ms
     lines, err = tcp_robot_command_retry(
-        host, port, tcp_cmd, timeout_s=_move_cmd_timeout_s(ms)
+        host, port, tcp_cmd, timeout_s=_move_cmd_timeout_s(timeout_ms, pulses)
     )
-    return jsonify({"ok": err is None, "error": err, "raw_lines": lines, "dir": d, "ms": ms})
+    enc = parse_enc_from_raw_lines(lines)
+    return jsonify(
+        {
+            "ok": err is None,
+            "error": err,
+            "raw_lines": lines,
+            "dir": d,
+            "ms": ms,
+            "ms_max": ms_max,
+            "pulses": pulses,
+            "move_mode": move_mode,
+            "enc": enc,
+            "tcp_cmd": tcp_cmd,
+        }
+    )
 
 
 @app.route("/api/motor")

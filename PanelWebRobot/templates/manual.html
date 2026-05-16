@@ -63,7 +63,43 @@
         </div>
       </div>
 
-      <h3 class="manual-card__sectitle" id="pulseSectionLabel">Milisegundos por dirección <span class="manual-card__sectag">MOVER</span></h3>
+      <h3 class="manual-card__sectitle" id="pulseSectionLabel">Movimiento y lectura de encoders <span class="manual-card__sectag">MOVER</span></h3>
+      <p class="manual-mini-hint">
+        Los movimientos van por <strong>milisegundos</strong> (PWM fijo). Los encoders solo se <strong>leen</strong> (línea <code>ENC:</code> en la respuesta). Mismos valores que <em>Laberinto físico</em>.
+      </p>
+      <label class="manual-field manual-field--check">
+        <input type="checkbox" id="useEncoderMoves" />
+        <span>Enviar pulsos en MOVER (solo si el firmware tiene control por encoder activo)</span>
+      </label>
+      <p class="manual-mini-hint manual-pro-mono" id="manualEncoderCalHint" aria-live="polite"></p>
+      <h4 class="manual-card__sectitle manual-card__sectitle--sm">Pulsos encoder por dirección</h4>
+      <div class="manual-pulse-grid" role="group">
+        <div class="manual-pulse-tile">
+          <div class="field-group manual-field manual-field--dir">
+            <label for="movePulseEncAdelante">Arriba <span class="manual-field__sub">adelante</span></label>
+            <input type="number" id="movePulseEncAdelante" data-enc-dir="adelante" min="1" max="65535" step="1" value="72" />
+          </div>
+        </div>
+        <div class="manual-pulse-tile">
+          <div class="field-group manual-field manual-field--dir">
+            <label for="movePulseEncAtras">Abajo <span class="manual-field__sub">atrás</span></label>
+            <input type="number" id="movePulseEncAtras" data-enc-dir="atras" min="1" max="65535" step="1" value="72" />
+          </div>
+        </div>
+        <div class="manual-pulse-tile">
+          <div class="field-group manual-field manual-field--dir">
+            <label for="movePulseEncIzquierda">Izquierda</label>
+            <input type="number" id="movePulseEncIzquierda" data-enc-dir="izquierda" min="1" max="65535" step="1" value="38" />
+          </div>
+        </div>
+        <div class="manual-pulse-tile">
+          <div class="field-group manual-field manual-field--dir">
+            <label for="movePulseEncDerecha">Derecha</label>
+            <input type="number" id="movePulseEncDerecha" data-enc-dir="derecha" min="1" max="65535" step="1" value="38" />
+          </div>
+        </div>
+      </div>
+      <h4 class="manual-card__sectitle manual-card__sectitle--sm">Tope ms máx. por dirección</h4>
       <div class="manual-pulse-grid" role="group" aria-labelledby="pulseSectionLabel">
         <div class="manual-pulse-tile">
           <div class="field-group manual-field manual-field--dir">
@@ -147,9 +183,19 @@
     </details>
   </div>
 
+  <script src="{{ url_for('static', filename='panel_move_cal.js') }}"></script>
   <script>
     const hostEl = document.getElementById("host");
     const portEl = document.getElementById("port");
+    const useEncoderMovesEl = document.getElementById("useEncoderMoves");
+    const manualEncoderCalHintEl = document.getElementById("manualEncoderCalHint");
+
+    const ENC_IDS = {
+      adelante: "movePulseEncAdelante",
+      atras: "movePulseEncAtras",
+      izquierda: "movePulseEncIzquierda",
+      derecha: "movePulseEncDerecha",
+    };
 
     const PULSE_LS = {
       adelante: "manualMovePulseMs_adelante",
@@ -172,6 +218,22 @@
       derecha: "movePulseHintDerecha",
     };
 
+    function syncManualEncoderPrefs() {
+      if (typeof RobotMoveCal === "undefined") return;
+      if (useEncoderMovesEl) RobotMoveCal.setUseEncoderMoves(!!useEncoderMovesEl.checked);
+      Object.keys(ENC_IDS).forEach(function (d) {
+        const el = document.getElementById(ENC_IDS[d]);
+        if (el) RobotMoveCal.saveEncPulses(d, el.value);
+      });
+      Object.keys(PULSE_LS).forEach(function (d) {
+        const el = document.getElementById(PULSE_IDS[d]);
+        if (el) RobotMoveCal.saveMsMax(d, el.value);
+      });
+      if (manualEncoderCalHintEl) {
+        manualEncoderCalHintEl.textContent = RobotMoveCal.calibrationSummaryLine();
+      }
+    }
+
     function savePrefs() {
       try {
         localStorage.setItem("robotPanelHost", hostEl.value.trim());
@@ -180,6 +242,7 @@
           const el = document.getElementById(PULSE_IDS[d]);
           if (el) localStorage.setItem(PULSE_LS[d], el.value);
         });
+        syncManualEncoderPrefs();
       } catch (_) {}
     }
 
@@ -238,7 +301,17 @@
           const saved = localStorage.getItem(PULSE_LS[d]);
           el.value = saved != null && saved !== "" ? saved : base;
         });
+        if (typeof RobotMoveCal !== "undefined") {
+          if (useEncoderMovesEl) useEncoderMovesEl.checked = RobotMoveCal.useEncoderMoves();
+          RobotMoveCal.DIRS.forEach(function (d) {
+            const encEl = document.getElementById(ENC_IDS[d]);
+            if (encEl) encEl.value = String(RobotMoveCal.getEncPulses(d));
+            const msEl = document.getElementById(PULSE_IDS[d]);
+            if (msEl) msEl.value = String(RobotMoveCal.getMsMax(d));
+          });
+        }
         updatePulseSecHint();
+        syncManualEncoderPrefs();
       } catch (_) {}
     }
 
@@ -366,7 +439,14 @@
         port +
         "&dir=" +
         encodeURIComponent(dir);
-      if (dir !== "detener") url += "&ms=" + String(getPulseMsForDir(dir));
+      if (dir !== "detener") {
+        syncManualEncoderPrefs();
+        if (typeof RobotMoveCal !== "undefined") {
+          url = RobotMoveCal.appendMoverQuery(url, dir);
+        } else {
+          url += "&ms=" + String(getPulseMsForDir(dir));
+        }
+      }
       try {
         const res = await fetch(url);
         const j = await res.json();
@@ -374,8 +454,15 @@
           msg.textContent = j.error || "Error en el comando";
           msg.className = "msg err move-msg manual-move-msg";
         } else {
-          msg.textContent =
+          let okTxt =
             dir === "detener" ? "Motores detenidos." : "Listo: movimiento completado.";
+          if (j.enc && typeof RobotMoveCal !== "undefined") {
+            const es = RobotMoveCal.formatEncStatus(j.enc);
+            if (es) okTxt += " · " + es;
+          } else if (j.move_mode === "encoder") {
+            okTxt += " · encoder E" + (j.pulses || "?");
+          }
+          msg.textContent = okTxt;
           msg.className = "msg ok move-msg manual-move-msg";
         }
       } catch (e) {
@@ -411,18 +498,42 @@
         });
       }
     });
+    Object.keys(ENC_IDS).forEach(function (d) {
+      const el = document.getElementById(ENC_IDS[d]);
+      if (el) {
+        el.addEventListener("input", function () {
+          syncManualEncoderPrefs();
+          savePrefs();
+        });
+      }
+    });
+    if (useEncoderMovesEl) {
+      useEncoderMovesEl.addEventListener("change", function () {
+        syncManualEncoderPrefs();
+        savePrefs();
+      });
+    }
 
     var btnPulseSyncAll = document.getElementById("btnPulseSyncAll");
     if (btnPulseSyncAll) {
       btnPulseSyncAll.addEventListener("click", function () {
-        var root = document.getElementById("movePulseMsAdelante");
-        if (!root) return;
-        var v = root.value;
-        ["atras", "izquierda", "derecha"].forEach(function (d) {
-          var oe = document.getElementById(PULSE_IDS[d]);
-          if (oe) oe.value = v;
-          updatePulseSecHint(d);
-        });
+        var rootMs = document.getElementById("movePulseMsAdelante");
+        var rootEnc = document.getElementById("movePulseEncAdelante");
+        if (rootMs) {
+          var v = rootMs.value;
+          ["atras", "izquierda", "derecha"].forEach(function (d) {
+            var oe = document.getElementById(PULSE_IDS[d]);
+            if (oe) oe.value = v;
+            updatePulseSecHint(d);
+          });
+        }
+        if (rootEnc) {
+          var ve = rootEnc.value;
+          ["atras", "izquierda", "derecha"].forEach(function (d) {
+            var oe = document.getElementById(ENC_IDS[d]);
+            if (oe) oe.value = ve;
+          });
+        }
         updatePulseSecHint("adelante");
         savePrefs();
       });

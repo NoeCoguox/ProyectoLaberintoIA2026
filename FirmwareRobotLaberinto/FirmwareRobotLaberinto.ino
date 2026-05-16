@@ -37,11 +37,11 @@
  *   El firmware lo pone en HIGH mientras gire cualquier canal (mismos flags que moving/movingA/movingB).
  *   Pon MOTOR_ACTIVITY_LED_PIN en -1 si no usás LED. Podés cambiar el pin con #define MOTOR_ACTIVITY_LED_PIN ...
  *
- * ----- Encoders FC-03 (ranura IR, pin DO) — uno por llanta; rectifica PWM en MOVER:ADELANTE / ATRAS -----
- *   Llanta motor A (L298N canal A) -> DO del FC-03 -> GPIO34  ·  Llanta B -> DO -> GPIO35
- *   FC-03: VCC preferible 3V3 del ESP32 (DO entonces 3,3 V); GND comun; AO no usar.
- *   Disco con agujeros en el eje: mas pulsos = mas correccion. MOVER:* equilibra PWM entre llantas.
- *   Si torcido al reves: ENCODER_SWAP_AB 1
+ * ----- Encoders FC-03 (ranura IR, pin DO) — control activo de recto en MOVER:* -----
+ *   Llanta motor A (L298N canal A) -> DO -> GPIO34  ·  Llanta B -> DO -> GPIO35
+ *   FC-03: VCC 3V3; GND comun; AO no usar. Disco con ranuras en el eje obligatorio.
+ *   Encoders: solo LECTURA (pulsos en ENC: tras MOVER/LEER). PWM y distancia = ms (MOVER:*:ms).
+ *   Para reactivar correccion automatica: ENCODER_DRIVE_CONTROL 1 en el .ino.
  *   Sin encoders: #define USE_WHEEL_ENCODERS 0 antes de compilar.
  *
  * ----- Sensor de color TCS34725 (chip TCS34725, p. ej. módulo Adafruit o clon I2C) -----
@@ -158,9 +158,13 @@ const unsigned long WIFI_RECONNECT_INTERVAL_MS = 5000;
 #define TRIG 5
 #define ECHO 18
 
-// ========== Encoders FC-03 (DO digital, ranura IR) — equilibrio en MOVER:ADELANTE|ATRAS|IZQ|DER ==========
+// ========== Encoders FC-03 — lectura + (opcional) control PWM ==========
 #ifndef USE_WHEEL_ENCODERS
 #define USE_WHEEL_ENCODERS 1
+#endif
+/** 0 = movimientos libres por ms; encoders solo informan (ENC: en TCP). 1 = correccion PWM automatica. */
+#ifndef ENCODER_DRIVE_CONTROL
+#define ENCODER_DRIVE_CONTROL 0
 #endif
 #if USE_WHEEL_ENCODERS
 #ifndef ENCODER_WHEEL_A_DO_PIN
@@ -172,11 +176,66 @@ const unsigned long WIFI_RECONNECT_INTERVAL_MS = 5000;
 #ifndef ENCODER_SWAP_AB
 #define ENCODER_SWAP_AB 0
 #endif
-#ifndef ENCODER_STRAIGHT_ADJ_MS
-#define ENCODER_STRAIGHT_ADJ_MS 35
+/** Periodo del regulador (ms). 5 ms ~ 200 Hz — respuesta rapida al torcerse. */
+#ifndef ENCODER_CTRL_PERIOD_MS
+#define ENCODER_CTRL_PERIOD_MS 5
 #endif
 #ifndef ENCODER_MIN_TOTAL_EDGES
-#define ENCODER_MIN_TOTAL_EDGES 8
+#define ENCODER_MIN_TOTAL_EDGES 2
+#endif
+/** Bucle POSICION: desfase acumulado de pulsos (A - B). */
+#ifndef ENCODER_POS_KP
+#define ENCODER_POS_KP 16
+#endif
+#ifndef ENCODER_POS_KI
+#define ENCODER_POS_KI 3
+#endif
+#ifndef ENCODER_POS_KI_DIV
+#define ENCODER_POS_KI_DIV 2
+#endif
+#ifndef ENCODER_POS_I_CLAMP
+#define ENCODER_POS_I_CLAMP 800
+#endif
+/** Bucle VELOCIDAD: si una rueda gira mas rapido *ahora* (pulsos/s). */
+#ifndef ENCODER_VEL_KP
+#define ENCODER_VEL_KP 12
+#endif
+#ifndef ENCODER_VEL_KI
+#define ENCODER_VEL_KI 2
+#endif
+#ifndef ENCODER_VEL_KI_DIV
+#define ENCODER_VEL_KI_DIV 4
+#endif
+#ifndef ENCODER_VEL_I_CLAMP
+#define ENCODER_VEL_I_CLAMP 400
+#endif
+/** Refuerzo si la rueda lenta va por debajo del 85 % de la velocidad media. */
+#ifndef ENCODER_CATCHUP_GAIN
+#define ENCODER_CATCHUP_GAIN 22
+#endif
+#ifndef ENCODER_MAX_TRIM
+#define ENCODER_MAX_TRIM 140
+#endif
+#ifndef ENCODER_PWM_MIN
+#define ENCODER_PWM_MIN 28
+#endif
+/** |diff| pulsos: modo recuperacion (PWM max en la lenta). */
+#ifndef ENCODER_RECOVERY_DIFF
+#define ENCODER_RECOVERY_DIFF 10
+#endif
+/** Ventana minima (ms) para medir velocidad por encoder. */
+#ifndef ENCODER_VEL_WINDOW_MS
+#define ENCODER_VEL_WINDOW_MS 12
+#endif
+/**
+ * Si una rueda lleva < 1/6 de los pulsos de la otra (suelo: una trabada, otra libre),
+ * se frena la rapida y se intenta arrancar la lenta — evita B=399 A=19.
+ */
+#ifndef ENCODER_STALL_PULSE_RATIO
+#define ENCODER_STALL_PULSE_RATIO 6
+#endif
+#ifndef ENCODER_STALL_FAST_PWM
+#define ENCODER_STALL_FAST_PWM 45
 #endif
 #endif
 
@@ -276,6 +335,8 @@ const int PWM_SPEED = 200;               // 0-255
 // Estado
 bool moving = false;
 unsigned long moveEndTime = 0;
+/** 0 = solo tiempo; >0 = parar cuando min(pulsos A,B) >= este valor (MOVER:*:E###). */
+static uint32_t g_moverEncTarget = 0;
 /** 0 = ninguno; durante MOVER:* reaplicamos salidas cada loop (LEDC + servo). */
 static uint8_t g_moverPulseKind = 0;
 static void refreshMoverPulseOutputs(void);
@@ -293,6 +354,18 @@ unsigned long motorBEndTime = 0;
 volatile uint32_t g_encCountA = 0;
 volatile uint32_t g_encCountB = 0;
 static unsigned long g_encLastAdjustMs = 0;
+static int32_t g_encPosIntegral = 0;
+static int32_t g_encVelIntegral = 0;
+static uint32_t g_encSnapA = 0;
+static uint32_t g_encSnapB = 0;
+static unsigned long g_encSnapMs = 0;
+static int32_t g_encVelA_x10 = 0; /* pulsos/s * 10 */
+static int32_t g_encVelB_x10 = 0;
+static int g_encLastPwmA = 0;
+static int g_encLastPwmB = 0;
+static unsigned long g_encLastLogMs = 0;
+static unsigned long g_encLastCtrlMs = 0;
+static uint8_t g_encStraightState = 0; /* 0=ok 1=ajuste 2=recuperacion 3=trabado suelo */
 #endif
 String currentCommand = "";
 unsigned long lastWifiReconnectAttempt = 0;
@@ -692,7 +765,65 @@ static void encoderResetCounts() {
   g_encCountA = 0;
   g_encCountB = 0;
   interrupts();
-  g_encLastAdjustMs = millis();
+  g_encPosIntegral = 0;
+  g_encVelIntegral = 0;
+  g_encSnapA = 0;
+  g_encSnapB = 0;
+  g_encSnapMs = 0;
+  g_encVelA_x10 = 0;
+  g_encVelB_x10 = 0;
+  g_encStraightState = 0;
+  g_encLastPwmA = 0;
+  g_encLastPwmB = 0;
+  g_encLastAdjustMs = 0;
+  g_encLastCtrlMs = 0;
+  g_encLastLogMs = millis();
+}
+
+/** Estima pulsos/s de cada llanta (ventana ENCODER_VEL_WINDOW_MS). */
+static void encoderUpdateWheelVelocities(uint32_t ca, uint32_t cb, unsigned long now) {
+  if (g_encSnapMs == 0) {
+    g_encSnapA = ca;
+    g_encSnapB = cb;
+    g_encSnapMs = now;
+    return;
+  }
+  const unsigned long dt = now - g_encSnapMs;
+  if (dt < (unsigned long)ENCODER_VEL_WINDOW_MS) {
+    return;
+  }
+  if (dt > 120) {
+    g_encSnapA = ca;
+    g_encSnapB = cb;
+    g_encSnapMs = now;
+    g_encVelA_x10 = 0;
+    g_encVelB_x10 = 0;
+    return;
+  }
+  const uint32_t da = ca - g_encSnapA;
+  const uint32_t db = cb - g_encSnapB;
+  g_encVelA_x10 = (int32_t)((da * 10000UL) / dt);
+  g_encVelB_x10 = (int32_t)((db * 10000UL) / dt);
+  g_encSnapA = ca;
+  g_encSnapB = cb;
+  g_encSnapMs = now;
+}
+
+/** Lectura logica llanta A/B (respeta ENCODER_SWAP_AB). */
+static void encoderGetLogical(uint32_t& countA, uint32_t& countB) {
+  uint32_t ra;
+  uint32_t rb;
+  noInterrupts();
+  ra = g_encCountA;
+  rb = g_encCountB;
+  interrupts();
+#if ENCODER_SWAP_AB
+  countA = rb;
+  countB = ra;
+#else
+  countA = ra;
+  countB = rb;
+#endif
 }
 
 /** Reaplica direccion de motores segun MOVER:* (1=adelante 2=atras 3=izq 4=der). */
@@ -719,95 +850,164 @@ static void applyMoverPulseDirections(uint8_t kind) {
   }
 }
 
+#if ENCODER_DRIVE_CONTROL
 /**
- * Equilibra PWM: la llanta con mas pulsos en el encoder va mas rapido -> se le baja PWM.
- * Sirve para recto (adelante/atras) y para giros (izq/der: ambas ruedas deben girar parecido).
+ * Regulador dual profesional (cascada simplificada):
+ * 1) Velocidad: si A gira mas rapido que B *ahora* -> corrige al instante.
+ * 2) Posicion: si A lleva mas pulsos totales -> corrige deriva acumulada.
+ * 3) Catch-up: si una rueda va < 85 % de la velocidad media -> empuje extra a la lenta.
+ * Salida bilateral: pwmA = base - corr, pwmB = base + corr (equivalencia de giro).
  */
-static void updateEncoderBalancePwm() {
+static void encoderApplyDrive(uint8_t kind, int basePwm) {
+  const int base = constrain(basePwm, ENCODER_PWM_MIN, 255);
+  applyMoverPulseDirections(kind);
+
+  uint32_t ca;
+  uint32_t cb;
+  encoderGetLogical(ca, cb);
+  const uint32_t total = ca + cb;
+  if (total < (uint32_t)ENCODER_MIN_TOTAL_EDGES) {
+    analogWrite(ENA, base);
+    analogWrite(ENB, base);
+    g_encLastPwmA = base;
+    g_encLastPwmB = base;
+    g_encStraightState = 0;
+    return;
+  }
+
+  const unsigned long now = millis();
+  encoderUpdateWheelVelocities(ca, cb, now);
+
+  const int32_t diff = (int32_t)ca - (int32_t)cb;
+  const int adiff = (int)labs((long)diff);
+  const int32_t velDiff = g_encVelA_x10 - g_encVelB_x10;
+
+  g_encPosIntegral += diff;
+  g_encPosIntegral = constrain(g_encPosIntegral, -(int32_t)ENCODER_POS_I_CLAMP, (int32_t)ENCODER_POS_I_CLAMP);
+  g_encVelIntegral += velDiff;
+  g_encVelIntegral = constrain(g_encVelIntegral, -(int32_t)ENCODER_VEL_I_CLAMP, (int32_t)ENCODER_VEL_I_CLAMP);
+
+  int32_t corr = 0;
+  corr += (diff * (int32_t)ENCODER_POS_KP) / 10;
+  corr += (g_encPosIntegral * (int32_t)ENCODER_POS_KI) / ((int32_t)ENCODER_POS_KI_DIV * 10);
+  corr += (velDiff * (int32_t)ENCODER_VEL_KP) / 100;
+  corr += (g_encVelIntegral * (int32_t)ENCODER_VEL_KI) / ((int32_t)ENCODER_VEL_KI_DIV * 10);
+
+  const int32_t vAvg = (g_encVelA_x10 + g_encVelB_x10) / 2;
+  const int32_t thresh85 = (vAvg * 85) / 100;
+  if (g_encVelA_x10 < thresh85 && vAvg > 80) {
+    corr -= (int32_t)ENCODER_CATCHUP_GAIN;
+  }
+  if (g_encVelB_x10 < thresh85 && vAvg > 80) {
+    corr += (int32_t)ENCODER_CATCHUP_GAIN;
+  }
+
+  const uint32_t cMin = (ca < cb) ? ca : cb;
+  const uint32_t cMax = (ca > cb) ? ca : cb;
+  const bool stallGround =
+      (cMax >= 12) && (cMin * (uint32_t)ENCODER_STALL_PULSE_RATIO < cMax);
+
+  g_encStraightState = stallGround ? (uint8_t)3
+                       : (adiff < 3 && labs(velDiff) < 120) ? (uint8_t)0
+                       : (adiff >= (int)ENCODER_RECOVERY_DIFF) ? (uint8_t)2
+                                                               : (uint8_t)1;
+
+  int pwmA;
+  int pwmB;
+  if (stallGround) {
+    const int slowBoost = constrain(base + 50, ENCODER_PWM_MIN, 255);
+    const int fastCap = max(ENCODER_PWM_MIN, (int)ENCODER_STALL_FAST_PWM);
+    if (ca < cb) {
+      pwmA = slowBoost;
+      pwmB = fastCap;
+    } else {
+      pwmA = fastCap;
+      pwmB = slowBoost;
+    }
+  } else if (g_encStraightState >= 2) {
+    const int slowPwm = max(ENCODER_PWM_MIN, base - ENCODER_MAX_TRIM / 2);
+    if (diff > 0) {
+      pwmA = slowPwm;
+      pwmB = constrain(base, ENCODER_PWM_MIN, 255);
+    } else {
+      pwmA = constrain(base, ENCODER_PWM_MIN, 255);
+      pwmB = slowPwm;
+    }
+  } else {
+    corr = constrain(corr, -(int32_t)ENCODER_MAX_TRIM, (int32_t)ENCODER_MAX_TRIM);
+    pwmA = constrain(base - (int)corr, ENCODER_PWM_MIN, 255);
+    pwmB = constrain(base + (int)corr, ENCODER_PWM_MIN, 255);
+  }
+
+  analogWrite(ENA, pwmA);
+  analogWrite(ENB, pwmB);
+  g_encLastPwmA = pwmA;
+  g_encLastPwmB = pwmB;
+
+#if SERIAL_LOG_MOV
+  if (now - g_encLastLogMs >= 300UL) {
+    g_encLastLogMs = now;
+    Serial.print(F("[SYNC] A="));
+    Serial.print(ca);
+    Serial.print(F(" B="));
+    Serial.print(cb);
+    Serial.print(F(" d="));
+    Serial.print(diff);
+    Serial.print(F(" vA="));
+    Serial.print(g_encVelA_x10 / 10);
+    Serial.print(F(" vB="));
+    Serial.print(g_encVelB_x10 / 10);
+    Serial.print(F(" st="));
+    Serial.print((int)g_encStraightState);
+    if (stallGround) {
+      Serial.print(F(" TRABADO"));
+    }
+    Serial.print(F(" PWM "));
+    Serial.print(pwmA);
+    Serial.print(F("/"));
+    Serial.println(pwmB);
+  }
+#endif
+}
+
+/** Regulador a ~200 Hz durante MOVER:* (ENCODER_CTRL_PERIOD_MS). */
+static void updateEncoderDrivePwm() {
   const uint8_t kind = g_moverPulseKind;
   if (!moving || kind < 1 || kind > 4) {
     return;
   }
-  unsigned long now = millis();
-  if (now - g_encLastAdjustMs < (unsigned long)ENCODER_STRAIGHT_ADJ_MS) {
+  const unsigned long now = millis();
+  unsigned long period = (unsigned long)ENCODER_CTRL_PERIOD_MS;
+  if (g_encStraightState >= 2) {
+    period = 3;
+  } else if (g_encStraightState == 3) {
+    period = 4;
+  } else if (g_encStraightState == 1) {
+    period = 4;
+  }
+  if (now - g_encLastCtrlMs < period) {
     return;
   }
+  g_encLastCtrlMs = now;
   g_encLastAdjustMs = now;
-  uint32_t ca;
-  uint32_t cb;
-  noInterrupts();
-  ca = g_encCountA;
-  cb = g_encCountB;
-  interrupts();
-#if ENCODER_SWAP_AB
-  {
-    uint32_t t = ca;
-    ca = cb;
-    cb = t;
-  }
-#endif
-  if ((uint32_t)(ca + cb) < (uint32_t)ENCODER_MIN_TOTAL_EDGES) {
-    return;
-  }
-  const int32_t diff = (int32_t)ca - (int32_t)cb;
-  const int base = constrain(PWM_SPEED, 0, 255);
-  const int trim = constrain(((int)labs((long)diff)) / 2, 1, 45);
-  const int slowPwm = max(1, base - trim);
-
-  applyMoverPulseDirections(kind);
-
-  if (diff == 0) {
-    analogWrite(ENA, base);
-    analogWrite(ENB, base);
-    return;
-  }
-  if (diff > 0) {
-    analogWrite(ENA, slowPwm);
-    analogWrite(ENB, base);
-  } else {
-    analogWrite(ENA, base);
-    analogWrite(ENB, slowPwm);
-  }
+  encoderApplyDrive(kind, PWM_SPEED);
 }
+#endif /* ENCODER_DRIVE_CONTROL */
 
-/** Post-giro: alinea ruedas con pulso corto adelante y equilibrio encoder si esta activo. */
-static void updateEncoderBalancePwmForwardOnly(int pwmBase) {
+static void encoderLogFinalCounts() {
   uint32_t ca;
   uint32_t cb;
-  noInterrupts();
-  ca = g_encCountA;
-  cb = g_encCountB;
-  interrupts();
-#if ENCODER_SWAP_AB
-  {
-    uint32_t t = ca;
-    ca = cb;
-    cb = t;
-  }
-#endif
-  if ((uint32_t)(ca + cb) < (uint32_t)ENCODER_MIN_TOTAL_EDGES) {
-    motorApplyA(true);
-    motorApplyB(true);
-    analogWrite(ENA, pwmBase);
-    analogWrite(ENB, pwmBase);
-    return;
-  }
-  const int32_t diff = (int32_t)ca - (int32_t)cb;
-  const int base = constrain(pwmBase, 0, 255);
-  const int trim = constrain(((int)labs((long)diff)) / 2, 1, 40);
-  const int slowPwm = max(1, base - trim);
-  motorApplyA(true);
-  motorApplyB(true);
-  if (diff == 0) {
-    analogWrite(ENA, base);
-    analogWrite(ENB, base);
-  } else if (diff > 0) {
-    analogWrite(ENA, slowPwm);
-    analogWrite(ENB, base);
-  } else {
-    analogWrite(ENA, base);
-    analogWrite(ENB, slowPwm);
-  }
+  encoderGetLogical(ca, cb);
+  Serial.print(F("[ENC] fin A="));
+  Serial.print(ca);
+  Serial.print(F(" B="));
+  Serial.print(cb);
+  Serial.print(F(" diff="));
+  Serial.print((int32_t)ca - (int32_t)cb);
+  Serial.print(F(" ultPWM "));
+  Serial.print(g_encLastPwmA);
+  Serial.print(F("/"));
+  Serial.println(g_encLastPwmB);
 }
 #else
 static void initWheelEncoders() {}
@@ -863,7 +1063,11 @@ void setup() {
   Serial.print(ENCODER_WHEEL_A_DO_PIN);
   Serial.print(F(" B=GPIO"));
   Serial.print(ENCODER_WHEEL_B_DO_PIN);
-  Serial.println(F(" (equilibrio en MOVER adelante/atras/izq/der)"));
+#if ENCODER_DRIVE_CONTROL
+  Serial.println(F(" (control PWM por encoder en MOVER:E*; activo)"));
+#else
+  Serial.println(F(" (solo lectura ENC: tras MOVER/LEER; movimiento por ms)"));
+#endif
 #endif
   Serial.println(F("Buzzer ROJO en GPIO33 (solo suena con CELDA:ROJO)."));
 #if MOTOR_ACTIVITY_LED_PIN >= 0
@@ -1049,13 +1253,26 @@ void loop() {
   // (return por !client.connected) y los motores no llegaban a girar como en PruebaMotores_carrito.
   if (moving) {
     refreshMoverPulseOutputs();
-    if (millis() >= moveEndTime) {
+    bool doneMove = millis() >= moveEndTime;
+#if USE_WHEEL_ENCODERS && ENCODER_DRIVE_CONTROL
+    if (!doneMove && g_moverEncTarget > 0 && moverEncoderTargetReached()) {
+      doneMove = true;
+#if SERIAL_LOG_MOV
+      Serial.println(F("[MOV] Meta encoder (pulsos) alcanzada"));
+#endif
+    }
+#endif
+    if (doneMove) {
       const uint8_t endedMover = g_moverPulseKind;
       stopMotors();
       moving = false;
       g_moverPulseKind = 0;
+      g_moverEncTarget = 0;
 #if SERIAL_LOG_MOV
       Serial.println(F("[MOV] Fin pulso (MOVER) — motores OFF"));
+#if USE_WHEEL_ENCODERS
+      encoderLogFinalCounts();
+#endif
 #endif
       bool sendListoAhora = true;
       unsigned long settleMs = (unsigned long)POST_TURN_SETTLE_MS;
@@ -1081,6 +1298,7 @@ void loop() {
 #if SERIAL_LOG_MOV
           Serial.println(F("[MOV] Enviando LISTO + sensores por TCP"));
 #endif
+          emitEncToClient();
           sendSensorReadings();
           client.println("LISTO");
           client.flush();
@@ -1100,8 +1318,8 @@ void loop() {
   if (g_postTurnSettling) {
     {
       const int sp = constrain(POST_TURN_SETTLE_PWM, 0, 255);
-#if USE_WHEEL_ENCODERS
-      updateEncoderBalancePwmForwardOnly(sp);
+#if USE_WHEEL_ENCODERS && ENCODER_DRIVE_CONTROL
+      encoderApplyDrive(1, sp);
 #else
       motorApplyA(true);
       motorApplyB(true);
@@ -1116,6 +1334,7 @@ void loop() {
       Serial.println(F("[MOV] Fin post-giro — LISTO"));
 #endif
       if (client.connected()) {
+        emitEncToClient();
         sendSensorReadings();
         client.println("LISTO");
         client.flush();
@@ -1151,6 +1370,7 @@ void loop() {
       Serial.println(F("[MOV] Fin pulso (MOTOR)"));
 #endif
       if (client.connected()) {
+        emitEncToClient();
         sendSensorReadings();
         client.println("LISTO");
         client.flush();
@@ -1223,6 +1443,11 @@ void sendHardwareReport() {
 #if USE_WHEEL_ENCODERS
   client.println(String("PIN:") + String(ENCODER_WHEEL_A_DO_PIN) + "=FC-03 DO encoder llanta A (motor L298N canal A)");
   client.println(String("PIN:") + String(ENCODER_WHEEL_B_DO_PIN) + "=FC-03 DO encoder llanta B (motor L298N canal B)");
+#if ENCODER_DRIVE_CONTROL
+  client.println(F("ENC_PROTO:MOVER:DIR:E<pulsos>[:<ms_max>] — control por pulsos o tope ms"));
+#else
+  client.println(F("ENC_PROTO:MOVER:DIR:<ms> — movimiento por tiempo; ENC: solo lectura"));
+#endif
 #endif
 
   Wire.begin(I2C_SDA, I2C_SCL);
@@ -1248,11 +1473,45 @@ void sendHardwareReport() {
 #endif
 }
 
-/** Si el comando termina en :NNN (ms) tras ADELANTE/ATRAS, devuelve base sin sufijo y ms en [50,60000]. */
-static void splitMoveCmdPulse(const String& cmd, String& cmdBase, unsigned long& outMs) {
+static bool parseMoveMsToken(const String& tok, unsigned long& outMs) {
+  if (tok.length() == 0 || tok.length() > 6) {
+    return false;
+  }
+  for (unsigned i = 0; i < tok.length(); i++) {
+    if (!isDigit(tok.charAt(i))) {
+      return false;
+    }
+  }
+  long v = tok.toInt();
+  if (v < 50 || v > 60000) {
+    return false;
+  }
+  outMs = (unsigned long)v;
+  return true;
+}
+
+static bool parseMoveEncToken(const String& tok, uint32_t& outEnc) {
+  if (!tok.startsWith("E") || tok.length() < 2) {
+    return false;
+  }
+  for (unsigned i = 1; i < tok.length(); i++) {
+    if (!isDigit(tok.charAt(i))) {
+      return false;
+    }
+  }
+  long v = tok.substring(1).toInt();
+  if (v < 1 || v > 65535) {
+    return false;
+  }
+  outEnc = (uint32_t)v;
+  return true;
+}
+
+/** MOTOR:* — solo sufijo :ms numérico (comportamiento anterior). */
+static void splitMotorCmdPulse(const String& cmd, String& cmdBase, unsigned long& outMs) {
   cmdBase = cmd;
   outMs = MS_MOVE_PULSE_MS;
-  if (!cmd.startsWith("MOVER:") && !cmd.startsWith("MOTOR:")) {
+  if (!cmd.startsWith("MOTOR:")) {
     return;
   }
   int li = cmd.lastIndexOf(':');
@@ -1261,40 +1520,167 @@ static void splitMoveCmdPulse(const String& cmd, String& cmdBase, unsigned long&
   }
   String tail = cmd.substring(li + 1);
   tail.trim();
-  if (!tail.length() || tail.length() > 6) {
-    return;
-  }
-  for (int i = 0; i < tail.length(); ++i) {
-    char c = tail.charAt(i);
-    if (c < '0' || c > '9') {
-      return;
-    }
-  }
-  long v = tail.toInt();
-  if (v < 50 || v > 60000) {
+  unsigned long ms = 0;
+  if (!parseMoveMsToken(tail, ms)) {
     return;
   }
   String before = cmd.substring(0, li);
-  if (before.endsWith("ADELANTE") || before.endsWith("ATRAS") || before.endsWith("IZQUIERDA") ||
-      before.endsWith("DERECHA")) {
-    outMs = (unsigned long)v;
+  if (before.endsWith("ADELANTE") || before.endsWith("ATRAS")) {
+    outMs = ms;
     cmdBase = before;
   }
 }
+
+/**
+ * MOVER:ADELANTE[:E80][:3500]
+ *   E80   = meta de pulsos (min llanta A,B); control PI activo durante el trayecto.
+ *   3500  = tope de tiempo (ms); si no llega a E80, para igual al cumplirse el ms.
+ * MOVER:ADELANTE:3500 sin E = solo tiempo (ms) + PI.
+ */
+static void splitMoverCmd(const String& cmd, String& cmdBase, unsigned long& outMaxMs, uint32_t& outEncTarget) {
+  cmdBase = cmd;
+  outMaxMs = MS_MOVE_PULSE_MS;
+  outEncTarget = 0;
+  static const char* kBases[] = {"MOVER:ADELANTE", "MOVER:ATRAS", "MOVER:IZQUIERDA", "MOVER:DERECHA"};
+  for (unsigned bi = 0; bi < sizeof(kBases) / sizeof(kBases[0]); bi++) {
+    const char* base = kBases[bi];
+    if (!cmd.startsWith(base)) {
+      continue;
+    }
+    cmdBase = String(base);
+    String tail = cmd.substring(strlen(base));
+    if (tail.startsWith(":")) {
+      tail = tail.substring(1);
+    }
+    tail.trim();
+    while (tail.length() > 0) {
+      int nx = tail.indexOf(':');
+      String tok = (nx >= 0) ? tail.substring(0, nx) : tail;
+      if (nx >= 0) {
+        tail = tail.substring(nx + 1);
+      } else {
+        tail = "";
+      }
+      tok.trim();
+      if (!tok.length()) {
+        continue;
+      }
+      unsigned long ms = 0;
+      uint32_t enc = 0;
+      if (parseMoveEncToken(tok, enc)) {
+#if ENCODER_DRIVE_CONTROL
+        outEncTarget = enc;
+#endif
+      } else if (parseMoveMsToken(tok, ms)) {
+        outMaxMs = ms;
+      } else {
+        return;
+      }
+    }
+    return;
+  }
+  int li = cmd.lastIndexOf(':');
+  if (li <= 0) {
+    return;
+  }
+  String tail = cmd.substring(li + 1);
+  tail.trim();
+  unsigned long ms = 0;
+  if (parseMoveMsToken(tail, ms)) {
+    String before = cmd.substring(0, li);
+    if (before.endsWith("ADELANTE") || before.endsWith("ATRAS") || before.endsWith("IZQUIERDA") ||
+        before.endsWith("DERECHA")) {
+      outMaxMs = ms;
+      cmdBase = before;
+    }
+  }
+}
+
+#if USE_WHEEL_ENCODERS
+static void emitEncToClient() {
+  uint32_t ca;
+  uint32_t cb;
+  encoderGetLogical(ca, cb);
+  const int32_t diff = (int32_t)ca - (int32_t)cb;
+  client.print(F("ENC:A="));
+  client.print(ca);
+  client.print(F(":B="));
+  client.print(cb);
+  client.print(F(":DIFF="));
+  client.print(diff);
+  client.print(F(":PWMA="));
+  client.print(g_encLastPwmA);
+  client.print(F(":PWMB="));
+  client.print(g_encLastPwmB);
+  if (g_moverEncTarget > 0) {
+    client.print(F(":TARGET="));
+    client.print(g_moverEncTarget);
+  }
+  client.print(F(":STR="));
+  client.print((int)g_encStraightState);
+  client.print(F(":VELA="));
+  client.print(g_encVelA_x10 / 10);
+  client.print(F(":VELB="));
+  client.print(g_encVelB_x10 / 10);
+  if (g_encStraightState == 3) {
+    client.print(F(":STALL=1"));
+  }
+  client.println();
+  client.println(F("ENC_ACTIVE:1"));
+#if ENCODER_DRIVE_CONTROL
+  client.println(F("ENC_MODE:DRIVE"));
+#else
+  client.println(F("ENC_MODE:READONLY"));
+#endif
+}
+
+static bool moverEncoderTargetReached() {
+  if (g_moverEncTarget == 0) {
+    return false;
+  }
+  uint32_t ca;
+  uint32_t cb;
+  encoderGetLogical(ca, cb);
+  const uint32_t prog = (ca < cb) ? ca : cb;
+  return prog >= g_moverEncTarget;
+}
+#else
+static void emitEncToClient() {}
+static bool moverEncoderTargetReached() {
+  return false;
+}
+#endif
 
 void processCommand(String cmd) {
   currentCommand = cmd;
   String cmdBase = cmd;
   unsigned long pulseMsForMove = MS_MOVE_PULSE_MS;
-  splitMoveCmdPulse(cmd, cmdBase, pulseMsForMove);
+  uint32_t encTargetForMove = 0;
+  if (cmd.startsWith("MOVER:")) {
+    splitMoverCmd(cmd, cmdBase, pulseMsForMove, encTargetForMove);
+  } else {
+    splitMotorCmdPulse(cmd, cmdBase, pulseMsForMove);
+  }
 #if SERIAL_LOG_MOV
   if (cmd.startsWith("MOVER:") || cmd.startsWith("MOTOR:") || cmd == "DETENER") {
     Serial.print(F("[TCP] "));
-    Serial.println(cmd);
+    Serial.print(cmd);
+    if (encTargetForMove > 0) {
+      Serial.print(F("  encTarget="));
+      Serial.print(encTargetForMove);
+      Serial.print(F(" maxMs="));
+      Serial.print(pulseMsForMove);
+    }
+    Serial.println();
   }
 #endif
   if (cmdBase == "MOVER:ADELANTE") {
     g_moverPulseKind = 1;
+#if ENCODER_DRIVE_CONTROL
+    g_moverEncTarget = encTargetForMove;
+#else
+    g_moverEncTarget = 0;
+#endif
 #if USE_WHEEL_ENCODERS
     encoderResetCounts();
 #endif
@@ -1303,6 +1689,11 @@ void processCommand(String cmd) {
     moveEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOVER:ATRAS") {
     g_moverPulseKind = 2;
+#if ENCODER_DRIVE_CONTROL
+    g_moverEncTarget = encTargetForMove;
+#else
+    g_moverEncTarget = 0;
+#endif
 #if USE_WHEEL_ENCODERS
     encoderResetCounts();
 #endif
@@ -1311,6 +1702,11 @@ void processCommand(String cmd) {
     moveEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOVER:IZQUIERDA") {
     g_moverPulseKind = 3;
+#if ENCODER_DRIVE_CONTROL
+    g_moverEncTarget = encTargetForMove;
+#else
+    g_moverEncTarget = 0;
+#endif
 #if USE_WHEEL_ENCODERS
     encoderResetCounts();
 #endif
@@ -1319,6 +1715,11 @@ void processCommand(String cmd) {
     moveEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOVER:DERECHA") {
     g_moverPulseKind = 4;
+#if ENCODER_DRIVE_CONTROL
+    g_moverEncTarget = encTargetForMove;
+#else
+    g_moverEncTarget = 0;
+#endif
 #if USE_WHEEL_ENCODERS
     encoderResetCounts();
 #endif
@@ -1353,6 +1754,7 @@ void processCommand(String cmd) {
     stopMotors();
     moving = false;
     g_moverPulseKind = 0;
+    g_moverEncTarget = 0;
     g_postTurnSettling = false;
     movingA = false;
     movingB = false;
@@ -1360,7 +1762,9 @@ void processCommand(String cmd) {
   } else if (cmd == "PING") {
     client.println("PONG");
   } else if (cmd == "LEER") {
-    // Sensores sin mover (como el primer paso del simulador: celda actual + distancia al frente)
+#if USE_WHEEL_ENCODERS
+    emitEncToClient();
+#endif
     sendSensorReadings();
     client.println("LISTO");
     client.flush();
@@ -1461,6 +1865,12 @@ void turnRight() {
 }
 
 static void refreshMoverPulseOutputs(void) {
+#if USE_WHEEL_ENCODERS && ENCODER_DRIVE_CONTROL
+  if (g_moverPulseKind >= 1 && g_moverPulseKind <= 4) {
+    updateEncoderDrivePwm();
+    return;
+  }
+#endif
   switch (g_moverPulseKind) {
     case 1:
       moveForward();
@@ -1477,9 +1887,6 @@ static void refreshMoverPulseOutputs(void) {
     default:
       break;
   }
-#if USE_WHEEL_ENCODERS
-  updateEncoderBalancePwm();
-#endif
 }
 
 void stopMotors() {

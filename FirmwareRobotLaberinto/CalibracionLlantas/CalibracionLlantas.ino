@@ -4,11 +4,93 @@
  *
  * Pines = FirmwareRobotLaberinto.ino:
  *   A: IN1=12, IN2=13, ENA=25  |  B: IN3=14, IN4=27, ENB=26
+ *   Encoders FC-03: llanta A DO -> GPIO34, llanta B DO -> GPIO35 (VCC a 3V3)
  *
  * Si 5/6 giran en vez de recto: probá MOTOR_A_INVERT o MOTOR_B_INVERT = 1 y subí de nuevo.
+ * Si los pulsos de A/B salen invertidos: ENCODER_SWAP_AB = 1
  */
 
 #include <cstring>
+
+// ========== Encoders (mismos pines que FirmwareRobotLaberinto.ino) ==========
+#ifndef ENCODER_WHEEL_A_DO_PIN
+#define ENCODER_WHEEL_A_DO_PIN 34
+#endif
+#ifndef ENCODER_WHEEL_B_DO_PIN
+#define ENCODER_WHEEL_B_DO_PIN 35
+#endif
+#ifndef ENCODER_SWAP_AB
+#define ENCODER_SWAP_AB 0
+#endif
+
+volatile uint32_t g_encRawA = 0;
+volatile uint32_t g_encRawB = 0;
+
+static void IRAM_ATTR encIsrA() {
+  g_encRawA++;
+}
+
+static void IRAM_ATTR encIsrB() {
+  g_encRawB++;
+}
+
+static void encoderInit() {
+  pinMode(ENCODER_WHEEL_A_DO_PIN, INPUT);
+  pinMode(ENCODER_WHEEL_B_DO_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_WHEEL_A_DO_PIN), encIsrA, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_WHEEL_B_DO_PIN), encIsrB, CHANGE);
+}
+
+static void encoderReset() {
+  noInterrupts();
+  g_encRawA = 0;
+  g_encRawB = 0;
+  interrupts();
+}
+
+/** Cuentas por llanta lógica (A = motor L298N canal A). */
+static void encoderGetLogical(uint32_t& countA, uint32_t& countB) {
+  uint32_t ra;
+  uint32_t rb;
+  noInterrupts();
+  ra = g_encRawA;
+  rb = g_encRawB;
+  interrupts();
+#if ENCODER_SWAP_AB
+  countA = rb;
+  countB = ra;
+#else
+  countA = ra;
+  countB = rb;
+#endif
+}
+
+static void encoderPrintLine(const __FlashStringHelper* prefix) {
+  uint32_t ra;
+  uint32_t rb;
+  uint32_t la;
+  uint32_t lb;
+  noInterrupts();
+  ra = g_encRawA;
+  rb = g_encRawB;
+  interrupts();
+  encoderGetLogical(la, lb);
+  Serial.print(prefix);
+  Serial.print(F(" GPIO"));
+  Serial.print(ENCODER_WHEEL_A_DO_PIN);
+  Serial.print(F("="));
+  Serial.print(ra);
+  Serial.print(F(" GPIO"));
+  Serial.print(ENCODER_WHEEL_B_DO_PIN);
+  Serial.print(F("="));
+  Serial.print(rb);
+  Serial.print(F("  |  llanta A="));
+  Serial.print(la);
+  Serial.print(F("  llanta B="));
+  Serial.print(lb);
+  Serial.print(F("  diff="));
+  Serial.println((int32_t)la - (int32_t)lb);
+}
 
 #define MOTOR_A_IN1 12
 #define MOTOR_A_IN2 13
@@ -104,6 +186,17 @@ static void imprimirAyuda() {
   Serial.println(F(" 5 = ambas adelante | 6 = ambas atras"));
   Serial.println(F(" 7 = giro izq     | 8 = giro der"));
   Serial.println(F(" 0 = parar ya     | a = secuencia auto | h = este menu"));
+  Serial.println(F("--- Encoders FC-03 (GPIO34/35, VCC 3V3) ---"));
+  Serial.println(F(" e = leer contadores | r = reset contadores"));
+  Serial.println(F(" 9 = escucha 12 s (gira ruedas a mano, sin motor)"));
+  Serial.println(F(" Tras 1-8/5/6/7/8: al fin del pulso imprime pulsos A/B"));
+  Serial.println(F("------------------------------------"));
+  Serial.print(F(" ENCODER: A=GPIO"));
+  Serial.print(ENCODER_WHEEL_A_DO_PIN);
+  Serial.print(F(" B=GPIO"));
+  Serial.print(ENCODER_WHEEL_B_DO_PIN);
+  Serial.print(F("  ENCODER_SWAP_AB="));
+  Serial.println(ENCODER_SWAP_AB);
   Serial.println(F("------------------------------------"));
   Serial.print(F(" MOTOR_A_INVERT="));
   Serial.print(MOTOR_A_INVERT);
@@ -116,11 +209,15 @@ static void imprimirAyuda() {
   Serial.println(F("> Listo. Escribi comando y Enter."));
 }
 
-enum class Estado : uint8_t { Idle, Corriendo, Cooldown };
+enum class Estado : uint8_t { Idle, Corriendo, Cooldown, EncMonitor };
 static Estado g_estado = Estado::Idle;
 static unsigned long g_hastaMs = 0;
+static unsigned long g_encLastPrintMs = 0;
 static char g_ultimaPrueba[48] = "";
 static String g_lineBuf;
+
+static const unsigned long MS_ENC_MONITOR = 12000;
+static const unsigned long MS_ENC_PRINT_INTERVAL = 400;
 
 static void arrancarPrueba(const char* nombre, void (*aplicar)(void)) {
   if (g_estado != Estado::Idle) {
@@ -129,6 +226,8 @@ static void arrancarPrueba(const char* nombre, void (*aplicar)(void)) {
   }
   strncpy(g_ultimaPrueba, nombre, sizeof(g_ultimaPrueba) - 1);
   g_ultimaPrueba[sizeof(g_ultimaPrueba) - 1] = '\0';
+  encoderReset();
+  g_encLastPrintMs = millis();
   Serial.print(F(">>> "));
   Serial.print(nombre);
   Serial.println(F(" ..."));
@@ -166,14 +265,32 @@ static void aplicar_giro_der() {
   motorB_run(false);
 }
 
+static void iniciarMonitorEncoder() {
+  if (g_estado != Estado::Idle) {
+    Serial.println(F("(Espera fin de pulso o monitor encoder.)"));
+    return;
+  }
+  encoderReset();
+  g_estado = Estado::EncMonitor;
+  g_hastaMs = millis() + MS_ENC_MONITOR;
+  g_encLastPrintMs = 0;
+  Serial.println(F(">>> Monitor encoder 12 s — gira cada rueda a mano (sin motor)."));
+  encoderPrintLine(F("  [inicio]"));
+}
+
 static void tickEstado() {
   const unsigned long ahora = millis();
   if (g_estado == Estado::Corriendo) {
+    if (ahora - g_encLastPrintMs >= MS_ENC_PRINT_INTERVAL) {
+      g_encLastPrintMs = ahora;
+      encoderPrintLine(F("  [vivo]"));
+    }
     if (ahora >= g_hastaMs) {
       pararTodo();
       Serial.print(F("--- Fin pulso: "));
       Serial.print(g_ultimaPrueba);
       Serial.println(F(" (OFF)"));
+      encoderPrintLine(F("  [fin pulso]"));
       g_estado = Estado::Cooldown;
       g_hastaMs = ahora + MS_COOLDOWN;
     }
@@ -181,6 +298,16 @@ static void tickEstado() {
     if (ahora >= g_hastaMs) {
       g_estado = Estado::Idle;
       Serial.println(F("> Listo. Proximo comando + Enter."));
+    }
+  } else if (g_estado == Estado::EncMonitor) {
+    if (ahora - g_encLastPrintMs >= MS_ENC_PRINT_INTERVAL) {
+      g_encLastPrintMs = ahora;
+      encoderPrintLine(F("  [monitor]"));
+    }
+    if (ahora >= g_hastaMs) {
+      encoderPrintLine(F("  [fin monitor]"));
+      g_estado = Estado::Idle;
+      Serial.println(F("> Fin monitor encoder. h = menu."));
     }
   }
 }
@@ -231,6 +358,18 @@ static void procesarTecla(char c) {
     case '8':
       arrancarPrueba("GIRO DER", aplicar_giro_der);
       break;
+    case '9':
+      iniciarMonitorEncoder();
+      break;
+    case 'e':
+      encoderPrintLine(F(">>> ENC"));
+      Serial.println(F("> Listo."));
+      break;
+    case 'r':
+      encoderReset();
+      Serial.println(F(">>> Contadores encoder en 0."));
+      Serial.println(F("> Listo."));
+      break;
     default:
       Serial.print(F("No reconocido: '"));
       Serial.print(c);
@@ -260,26 +399,21 @@ static void procesarLineaCompleta(const String& lineaCruda) {
       return;
     }
     const unsigned long t = 1600;
-    Serial.println(F("--- Auto: A adelante ---"));
-    aplicar_A_adelante();
-    delay(t);
-    pararTodo();
-    delay(600);
-    Serial.println(F("--- Auto: B adelante ---"));
-    aplicar_B_adelante();
-    delay(t);
-    pararTodo();
-    delay(600);
-    Serial.println(F("--- Auto: ambas adelante ---"));
-    aplicar_ambas_adelante();
-    delay(t);
-    pararTodo();
-    delay(600);
-    Serial.println(F("--- Auto: ambas atras ---"));
-    aplicar_ambas_atras();
-    delay(t);
-    pararTodo();
-    Serial.println(F("--- Fin secuencia ---"));
+    auto pulsoConEncoder = [&](const char* nombre, void (*fn)(void)) {
+      encoderReset();
+      Serial.print(F("--- Auto: "));
+      Serial.println(nombre);
+      fn();
+      delay(t);
+      pararTodo();
+      encoderPrintLine(F("  [auto]"));
+      delay(600);
+    };
+    pulsoConEncoder("A adelante", aplicar_A_adelante);
+    pulsoConEncoder("B adelante", aplicar_B_adelante);
+    pulsoConEncoder("ambas adelante", aplicar_ambas_adelante);
+    pulsoConEncoder("ambas atras", aplicar_ambas_atras);
+    Serial.println(F("--- Fin secuencia (revisa: solo A debe subir en 1er pulso, solo B en 2do) ---"));
     Serial.println(F("> Listo."));
     return;
   }
@@ -301,10 +435,16 @@ void setup() {
   pinMode(MOTOR_B_IN4, OUTPUT);
   initL298nEnablePwm();
   pararTodo();
+  encoderInit();
+  encoderReset();
 
   Serial.println();
-  Serial.println(F("======== CalibracionLlantas | ESP32 + L298N ========"));
-  Serial.println(F(" Monitor serie: 115200 baud | comandos: tecla + Enter"));
+  Serial.println(F("======== CalibracionLlantas | ESP32 + L298N + encoders ========"));
+  Serial.print(F(" FC-03: GPIO"));
+  Serial.print(ENCODER_WHEEL_A_DO_PIN);
+  Serial.print(F(" (llanta A)  GPIO"));
+  Serial.print(ENCODER_WHEEL_B_DO_PIN);
+  Serial.println(F(" (llanta B)  |  Monitor 115200 | tecla + Enter"));
   Serial.println(F("===================================================="));
   imprimirAyuda();
 }

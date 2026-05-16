@@ -124,7 +124,7 @@ El firmware emite PWM continuo (**`BUZZER_FREQ_HZ`**, por defecto 2,5 kHz) en **
 
 ## 6. Encoders FC-03 (fotorranura / “encoder” de pulsos, un módulo por llanta)
 
-Usa el pin **DO** (salida digital del comparador). **AO** no hace falta para contar pulsos. El firmware cuenta flancos en **CHANGE** y en **`MOVER:ADELANTE` / `MOVER:ATRAS`** baja el PWM del lado que va más rápido (más pulsos que el otro) para tender a ir recto.
+Usa el pin **DO** (salida digital del comparador). **AO** no hace falta. El firmware cuenta flancos en **CHANGE** y en **`MOVER:*`** aplica control **PI** sobre el PWM: si una llanta lleva más pulsos que la otra, baja su PWM y sube el de la rezagada hasta igualar (recto y giros). Ajustes en `FirmwareRobotLaberinto.ino` (`ENCODER_KP`, `ENCODER_KI`, `ENCODER_MAX_TRIM`). Pruebas: `CalibracionLlantas` (comandos `e`, `9`, `1`–`5`).
 
 | FC-03 | ESP32 |
 |-------|-------|

@@ -41,7 +41,7 @@
     <div class="lf-pro-cmdbar lf-glass" role="navigation" aria-label="Resumen y ayuda">
       <div class="lf-pro-cmdbar__row">
         <p class="lf-pro-cmdbar__crumb">
-          <strong class="lf-pro-cmdbar__kbd">PC</strong> planifica y envía <code>MOVER:*</code> · <code>LEER</code> pinta el mapa · <strong>clic</strong> en celda = <strong>meta</strong> · flecha = frente · calibración 30×30&nbsp;cm en <strong>ms</strong>.
+          <strong class="lf-pro-cmdbar__kbd">PC</strong> planifica y envía <code>MOVER:*</code> por <strong>ms</strong> · <code>LEER</code> pinta el mapa · encoders solo lectura (<code>ENC:</code>) · calibración en la pestaña Calibración.
           <strong id="lfSimChip" class="lf-sim-chip" hidden>Simulador activo</strong>
         </p>
         <details class="lf-pro-cmdbar__help">
@@ -334,15 +334,28 @@
 
               <hr class="lf-cal-divider" />
 
-              <h3 class="lf-cal-subtitle">Pulsos MOVER (ms por dirección)</h3>
+              <h3 class="lf-cal-subtitle">Movimiento y lectura de encoders <span class="manual-card__sectag">MOVER</span></h3>
               <p class="lf-glass__hint">
-                Cada <code>MOVER:*</code> del agente y del plan usa el <strong>ms</strong> de la fila correspondiente. Comparte almacenamiento con <strong>Control manual</strong> (navegador). Adelante/atrás: ~30&nbsp;cm por celda; giros suelen llevar otros tiempos.
+                Cada <code>MOVER:*</code> usa <strong>milisegundos</strong> (PWM fijo). Los encoders se reportan en <code>ENC:</code> para calibrar o diagnosticar. Valores compartidos con <strong>Control manual</strong>.
               </p>
-              <div class="lf-move-pulse-grid" role="group" aria-label="Milisegundos por dirección">
-                <label class="lf-mini-field"><span>Arriba · adelante</span><input type="number" id="lfPulseMsAdelante" data-lf-pulse-dir="adelante" min="50" max="60000" step="10" value="350" inputmode="numeric" class="lf-input-pro" /></label>
-                <label class="lf-mini-field"><span>Abajo · atrás</span><input type="number" id="lfPulseMsAtras" data-lf-pulse-dir="atras" min="50" max="60000" step="10" value="350" inputmode="numeric" class="lf-input-pro" /></label>
-                <label class="lf-mini-field"><span>Izquierda</span><input type="number" id="lfPulseMsIzquierda" data-lf-pulse-dir="izquierda" min="50" max="60000" step="10" value="350" inputmode="numeric" class="lf-input-pro" /></label>
-                <label class="lf-mini-field"><span>Derecha</span><input type="number" id="lfPulseMsDerecha" data-lf-pulse-dir="derecha" min="50" max="60000" step="10" value="350" inputmode="numeric" class="lf-input-pro" /></label>
+              <label class="lf-mini-field lf-mini-field--check">
+                <input type="checkbox" id="lfUseEncoderMoves" />
+                <span>Enviar pulsos en MOVER (solo con control por encoder en firmware)</span>
+              </label>
+              <p class="lf-glass__hint lf-pro-mono" id="lfEncoderCalHint" aria-live="polite"></p>
+              <h4 class="lf-cal-subtitle lf-cal-subtitle--sm">Pulsos encoder (meta por celda / giro)</h4>
+              <div class="lf-move-pulse-grid" role="group" aria-label="Pulsos encoder por dirección">
+                <label class="lf-mini-field"><span>Arriba · adelante</span><input type="number" id="lfPulseEncAdelante" data-lf-enc-dir="adelante" min="1" max="65535" step="1" value="72" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Abajo · atrás</span><input type="number" id="lfPulseEncAtras" data-lf-enc-dir="atras" min="1" max="65535" step="1" value="72" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Izquierda</span><input type="number" id="lfPulseEncIzquierda" data-lf-enc-dir="izquierda" min="1" max="65535" step="1" value="38" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Derecha</span><input type="number" id="lfPulseEncDerecha" data-lf-enc-dir="derecha" min="1" max="65535" step="1" value="38" class="lf-input-pro" /></label>
+              </div>
+              <h4 class="lf-cal-subtitle lf-cal-subtitle--sm">Tope de tiempo (ms máx. por dirección)</h4>
+              <div class="lf-move-pulse-grid" role="group" aria-label="Milisegundos tope por dirección">
+                <label class="lf-mini-field"><span>Arriba · adelante</span><input type="number" id="lfPulseMsAdelante" data-lf-pulse-dir="adelante" min="50" max="60000" step="10" value="3500" inputmode="numeric" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Abajo · atrás</span><input type="number" id="lfPulseMsAtras" data-lf-pulse-dir="atras" min="50" max="60000" step="10" value="3500" inputmode="numeric" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Izquierda</span><input type="number" id="lfPulseMsIzquierda" data-lf-pulse-dir="izquierda" min="50" max="60000" step="10" value="900" inputmode="numeric" class="lf-input-pro" /></label>
+                <label class="lf-mini-field"><span>Derecha</span><input type="number" id="lfPulseMsDerecha" data-lf-pulse-dir="derecha" min="50" max="60000" step="10" value="900" inputmode="numeric" class="lf-input-pro" /></label>
               </div>
               <p id="lfCellMoveMsHint" class="lf-glass__hint lf-pro-mono lf-cell-move-hint" aria-live="polite"></p>
               <p class="lf-pulse-sync-row">
@@ -352,9 +365,9 @@
               <details class="lf-drift-note">
                 <summary class="lf-drift-note__sum">¿Pierde rectitud o se va torcido?</summary>
                 <div class="lf-drift-note__body">
-                  <p><strong>1. Calibración por lado:</strong> probá más <em>Control manual</em> y ajustá ms por dirección hasta que recto/giros coincidan con la grilla (un lado más largo = menos ms si se pasa del cuadro, o más ms si llega corto).</p>
-                  <p><strong>2. Mecánica:</strong> ruedas o goma desgastada, diferencia de diámetro, un motor más «fuerte», rodadura irregular o chasis torcido; revisá tensión del eje y que el peso sea simétrico.</p>
-                  <p><strong>3. Eléctrica / L298N:</strong> mismo PWM nominal pero motores distintos; algunos proyectos aplican corrección PWM por motor en firmware (ENA/ENB distintos) — este panel solo afiná tiempos de pulso por comando.</p>
+                  <p><strong>1. Lectura encoder:</strong> en <em>Control manual</em>, avanzá una celda y mirá <code>ENC:A=… B=…</code> en la respuesta. Ajustá <strong>ms</strong> por dirección hasta que el recorrido coincida con la grilla.</p>
+                  <p><strong>2. Mecánica:</strong> disco con ranuras en cada eje, FC-03 bien alineado, ruedas del mismo diámetro, GND común y VCC 3V3 en los sensores.</p>
+                  <p><strong>3. Si sigue torciendo:</strong> subí <code>ENCODER_KP</code> en el firmware o intercambiá cables DO si A/B están invertidos (<code>ENCODER_SWAP_AB</code>).</p>
                   <p><strong>4. Superficie:</strong> fibras/resbalón hacen girar mejor un lado; probá mismo suelo donde correrá el laberinto.</p>
                 </div>
               </details>
@@ -443,6 +456,7 @@ adelante</textarea>
     </div>
   </div>
 
+  <script src="{{ url_for('static', filename='panel_move_cal.js') }}"></script>
   <script src="{{ url_for('static', filename='laberinto_fisico.js') }}"></script>
 </body>
 </html>
