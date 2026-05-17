@@ -40,8 +40,9 @@
  * ----- Encoders FC-03 (ranura IR, pin DO) — control activo de recto en MOVER:* -----
  *   Llanta motor A (L298N canal A) -> DO -> GPIO34  ·  Llanta B -> DO -> GPIO35
  *   FC-03: VCC 3V3; GND comun; AO no usar. Disco con ranuras en el eje obligatorio.
- *   Encoders: solo LECTURA (pulsos en ENC: tras MOVER/LEER). PWM y distancia = ms (MOVER:*:ms).
- *   Para reactivar correccion automatica: ENCODER_DRIVE_CONTROL 1 en el .ino.
+ *   Encoders: lectura en ENC:; MOVER:*:E### con ENCODER_DRIVE_CONTROL 1; prueba por llanta:
+ *   MOTOR:A:E50 (adelante) / MOTOR:A:E-50 (atrás) / MOTOR:B:E±n — para solo al |n| pulsos (sin ms).
+ *   MOTOR:A:ADELANTE[:ms] sigue siendo pulso solo por tiempo. ENCODER_DRIVE_CONTROL 1 = PI en MOVER.
  *   Sin encoders: #define USE_WHEEL_ENCODERS 0 antes de compilar.
  *
  * ----- Sensor de color TCS34725 (chip TCS34725, p. ej. módulo Adafruit o clon I2C) -----
@@ -350,6 +351,21 @@ bool movingA = false;
 bool movingB = false;
 unsigned long motorAEndTime = 0;
 unsigned long motorBEndTime = 0;
+/** MOTOR:A:E±n / MOTOR:B:E±n — magnitud de pulsos; 0 = solo tiempo (ADELANTE/ATRAS). */
+static uint32_t g_motorWheelEncMag = 0;
+static uint32_t g_motorWheelStartA = 0;
+static uint32_t g_motorWheelStartB = 0;
+static unsigned long g_motorWheelMoveStartMs = 0;
+static bool g_motorWheelPairActive = false;
+static uint32_t g_motorWheelTargetA = 0;
+static uint32_t g_motorWheelTargetB = 0;
+#ifndef MOTOR_PAIR_ENCODER_SWAP_AB
+// En este robot el test individual muestra motor B contando en ENC A; por eso MOVEW cruza A/B.
+#define MOTOR_PAIR_ENCODER_SWAP_AB 1
+#endif
+#ifndef WHEEL_ENC_STALL_MS
+#define WHEEL_ENC_STALL_MS 2500
+#endif
 #if USE_WHEEL_ENCODERS
 volatile uint32_t g_encCountA = 0;
 volatile uint32_t g_encCountB = 0;
@@ -809,6 +825,39 @@ static void encoderUpdateWheelVelocities(uint32_t ca, uint32_t cb, unsigned long
   g_encSnapMs = now;
 }
 
+/** Pulsos crudos en GPIO34 (canal motor A), sin ENCODER_SWAP_AB. */
+static uint32_t encoderReadRawA() {
+  uint32_t v;
+  noInterrupts();
+  v = g_encCountA;
+  interrupts();
+  return v;
+}
+
+static uint32_t encoderReadRawB() {
+  uint32_t v;
+  noInterrupts();
+  v = g_encCountB;
+  interrupts();
+  return v;
+}
+
+static uint32_t encoderReadForMotorA() {
+#if MOTOR_PAIR_ENCODER_SWAP_AB
+  return encoderReadRawB();
+#else
+  return encoderReadRawA();
+#endif
+}
+
+static uint32_t encoderReadForMotorB() {
+#if MOTOR_PAIR_ENCODER_SWAP_AB
+  return encoderReadRawA();
+#else
+  return encoderReadRawB();
+#endif
+}
+
 /** Lectura logica llanta A/B (respeta ENCODER_SWAP_AB). */
 static void encoderGetLogical(uint32_t& countA, uint32_t& countB) {
   uint32_t ra;
@@ -1239,6 +1288,26 @@ void dumpSensorReadingsSerialOnly() {
 #endif
 }
 
+static void servicePingWhileBusy() {
+  if (!tcpServerStarted) {
+    return;
+  }
+  WiFiClient pingClient = server.available();
+  if (!pingClient) {
+    return;
+  }
+  pingClient.setTimeout(30);
+  String line = pingClient.readStringUntil('\n');
+  line.trim();
+  if (line == "PING") {
+    pingClient.println("PONG");
+  } else {
+    pingClient.println("BUSY");
+  }
+  pingClient.flush();
+  pingClient.stop();
+}
+
 void loop() {
   updateMotorActivityLed();
   updateServoSweepAndReport();
@@ -1252,6 +1321,7 @@ void loop() {
   // Si el PC cierra el socket en cuanto envía el comando, antes no se ejecutaba este bloque
   // (return por !client.connected) y los motores no llegaban a girar como en PruebaMotores_carrito.
   if (moving) {
+    servicePingWhileBusy();
     refreshMoverPulseOutputs();
     bool doneMove = millis() >= moveEndTime;
 #if USE_WHEEL_ENCODERS && ENCODER_DRIVE_CONTROL
@@ -1316,6 +1386,7 @@ void loop() {
   }
 
   if (g_postTurnSettling) {
+    servicePingWhileBusy();
     {
       const int sp = constrain(POST_TURN_SETTLE_PWM, 0, 255);
 #if USE_WHEEL_ENCODERS && ENCODER_DRIVE_CONTROL
@@ -1351,14 +1422,122 @@ void loop() {
   }
 
   if (movingA || movingB) {
-    if (movingA && millis() >= motorAEndTime) {
+    servicePingWhileBusy();
+#if USE_WHEEL_ENCODERS
+    if (g_motorWheelPairActive) {
+      const uint32_t rawA = encoderReadForMotorA();
+      const uint32_t rawB = encoderReadForMotorB();
+      const uint32_t deltaA = rawA - g_motorWheelStartA;
+      const uint32_t deltaB = rawB - g_motorWheelStartB;
+      if (movingA && deltaA >= g_motorWheelTargetA) {
+        stopMotorA();
+        movingA = false;
+#if SERIAL_LOG_MOV
+        Serial.print(F("[MOV] Fin pair motor A enc="));
+        Serial.println(rawA);
+#endif
+      }
+      if (movingB && deltaB >= g_motorWheelTargetB) {
+        stopMotorB();
+        movingB = false;
+#if SERIAL_LOG_MOV
+        Serial.print(F("[MOV] Fin pair motor B enc="));
+        Serial.println(rawB);
+#endif
+      }
+      if ((movingA || movingB) && (millis() - g_motorWheelMoveStartMs) >= (unsigned long)WHEEL_ENC_STALL_MS) {
+        const bool stalledA = movingA && deltaA == 0;
+        const bool stalledB = movingB && deltaB == 0;
+        if (stalledA || stalledB) {
+          stopMotors();
+          movingA = false;
+          movingB = false;
+          g_motorWheelPairActive = false;
+#if SERIAL_LOG_MOV
+          Serial.println(F("[MOV] ERR pair encoder sin pulsos"));
+#endif
+          if (client.connected()) {
+            client.println(F("ERR:ENC_SIN_PULSOS"));
+            emitEncToClient();
+            client.println("LISTO");
+            client.flush();
+            mirrorLastReadToSerialAfterTcp();
+          }
+          delay(20);
+          return;
+        }
+      }
+      if (!movingA && !movingB) {
+        g_motorWheelPairActive = false;
+      }
+    }
+    if (g_motorWheelEncMag > 0) {
+      const uint32_t rawA = encoderReadRawA();
+      const uint32_t rawB = encoderReadRawB();
+      const uint32_t deltaA = rawA - g_motorWheelStartA;
+      const uint32_t deltaB = rawB - g_motorWheelStartB;
+      const uint32_t delta = (deltaA > deltaB) ? deltaA : deltaB;
+      if (movingA) {
+        if (delta >= g_motorWheelEncMag) {
+          stopMotorA();
+          movingA = false;
+          g_motorWheelEncMag = 0;
+#if SERIAL_LOG_MOV
+          Serial.print(F("[MOV] Fin MOTOR A encoder A/B="));
+          Serial.print(rawA);
+          Serial.print('/');
+          Serial.println(rawB);
+#endif
+        }
+      } else if (movingB) {
+        if (delta >= g_motorWheelEncMag) {
+          stopMotorB();
+          movingB = false;
+          g_motorWheelEncMag = 0;
+#if SERIAL_LOG_MOV
+          Serial.print(F("[MOV] Fin MOTOR B encoder A/B="));
+          Serial.print(rawA);
+          Serial.print('/');
+          Serial.println(rawB);
+#endif
+        }
+      }
+      if (g_motorWheelEncMag > 0 && (millis() - g_motorWheelMoveStartMs) >= (unsigned long)WHEEL_ENC_STALL_MS) {
+        if (delta == 0) {
+          if (movingA) {
+            stopMotorA();
+            movingA = false;
+          }
+          if (movingB) {
+            stopMotorB();
+            movingB = false;
+          }
+          g_motorWheelEncMag = 0;
+#if SERIAL_LOG_MOV
+          Serial.println(F("[MOV] ERR encoder sin pulsos (revisar FC-03 / cable GPIO)"));
+#endif
+          if (client.connected()) {
+            client.println(F("ERR:ENC_SIN_PULSOS"));
+            emitEncToClient();
+            client.println("LISTO");
+            client.flush();
+            mirrorLastReadToSerialAfterTcp();
+          }
+          delay(20);
+          return;
+        }
+      }
+    }
+#endif
+    /* MOTOR:A:E±n — solo encoder; sin tope por tiempo. ADELANTE/ATRAS sí usan ms. */
+    if (movingA && !g_motorWheelPairActive && g_motorWheelEncMag == 0 && millis() >= motorAEndTime) {
       stopMotorA();
       movingA = false;
 #if SERIAL_LOG_MOV
       Serial.println(F("[MOV] Fin pulso motor A"));
 #endif
     }
-    if (movingB && millis() >= motorBEndTime) {
+    if (movingB && !g_motorWheelPairActive && g_motorWheelEncMag == 0 && millis() >= motorBEndTime) {
       stopMotorB();
       movingB = false;
 #if SERIAL_LOG_MOV
@@ -1505,6 +1684,160 @@ static bool parseMoveEncToken(const String& tok, uint32_t& outEnc) {
   }
   outEnc = (uint32_t)v;
   return true;
+}
+
+/** E50, E-20, -30, +15 — pulsos firmados (negativo = atrás en MOTOR:A|B). */
+static bool parseSignedMoveEncToken(const String& tok, int32_t& outSigned) {
+  String s = tok;
+  if (s.startsWith("E") || s.startsWith("e")) {
+    s = s.substring(1);
+  }
+  s.trim();
+  if (s.length() == 0) {
+    return false;
+  }
+  unsigned start = 0;
+  if (s.charAt(0) == '-' || s.charAt(0) == '+') {
+    start = 1;
+  }
+  if (start >= s.length()) {
+    return false;
+  }
+  for (unsigned i = start; i < s.length(); i++) {
+    if (!isDigit(s.charAt(i))) {
+      return false;
+    }
+  }
+  const long v = s.toInt();
+  if (v == 0) {
+    return false;
+  }
+  if (v < -65535L || v > 65535L) {
+    return false;
+  }
+  outSigned = (int32_t)v;
+  return true;
+}
+
+/**
+ * MOTOR:A:E-40 / MOTOR:B:E30 — una llanta; para solo al |pulsos| (sin ms en el comando).
+ */
+static bool parseMotorWheelSignedCmd(const String& cmd, bool& outIsA, int32_t& outSigned) {
+  static const char* kPrefixes[] = {"MOTOR:A:", "MOTOR:B:"};
+  for (unsigned pi = 0; pi < 2; pi++) {
+    const char* prefix = kPrefixes[pi];
+    if (!cmd.startsWith(prefix)) {
+      continue;
+    }
+    String tail = cmd.substring(strlen(prefix));
+    tail.trim();
+    if (tail == "DETENER" || tail.startsWith("ADELANTE") || tail.startsWith("ATRAS")) {
+      return false;
+    }
+    int32_t signedEnc = 0;
+    bool gotEnc = false;
+    while (tail.length() > 0) {
+      const int nx = tail.indexOf(':');
+      String tok = (nx >= 0) ? tail.substring(0, nx) : tail;
+      if (nx >= 0) {
+        tail = tail.substring(nx + 1);
+      } else {
+        tail = "";
+      }
+      tok.trim();
+      if (!tok.length()) {
+        continue;
+      }
+      int32_t s = 0;
+      if (parseSignedMoveEncToken(tok, s)) {
+        if (gotEnc) {
+          return false;
+        }
+        signedEnc = s;
+        gotEnc = true;
+      } else {
+        return false;
+      }
+    }
+    if (!gotEnc) {
+      return false;
+    }
+    outIsA = (pi == 0);
+    outSigned = signedEnc;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * MOVEW:ADELANTE:A10:B12
+ * MOVEW:ATRAS:A10:B12
+ * MOVEW:IZQUIERDA:A10:B12
+ * MOVEW:DERECHA:A10:B12
+ *
+ * A/B son magnitudes positivas. La direccion decide el signo de cada motor.
+ */
+static bool parseMoveWheelPairCmd(const String& cmd, uint8_t& outKind, uint32_t& outA, uint32_t& outB) {
+  if (!cmd.startsWith("MOVEW:")) {
+    return false;
+  }
+  String tail = cmd.substring(6);
+  tail.trim();
+  int sep = tail.indexOf(':');
+  if (sep <= 0) {
+    return false;
+  }
+  String dir = tail.substring(0, sep);
+  dir.trim();
+  dir.toUpperCase();
+  if (dir == "ADELANTE") {
+    outKind = 1;
+  } else if (dir == "ATRAS") {
+    outKind = 2;
+  } else if (dir == "IZQUIERDA") {
+    outKind = 3;
+  } else if (dir == "DERECHA") {
+    outKind = 4;
+  } else {
+    return false;
+  }
+
+  tail = tail.substring(sep + 1);
+  outA = 0;
+  outB = 0;
+  while (tail.length() > 0) {
+    const int nx = tail.indexOf(':');
+    String tok = (nx >= 0) ? tail.substring(0, nx) : tail;
+    if (nx >= 0) {
+      tail = tail.substring(nx + 1);
+    } else {
+      tail = "";
+    }
+    tok.trim();
+    if (tok.length() < 2) {
+      continue;
+    }
+    const char k = tok.charAt(0);
+    String val = tok.substring(1);
+    val.trim();
+    for (unsigned i = 0; i < val.length(); i++) {
+      if (!isDigit(val.charAt(i))) {
+        return false;
+      }
+    }
+    const long n = val.toInt();
+    if (n < 1 || n > 65535) {
+      return false;
+    }
+    if (k == 'A' || k == 'a') {
+      outA = (uint32_t)n;
+    } else if (k == 'B' || k == 'b') {
+      outB = (uint32_t)n;
+    } else {
+      return false;
+    }
+  }
+  return outA > 0 && outB > 0;
 }
 
 /** MOTOR:* — solo sufijo :ms numérico (comportamiento anterior). */
@@ -1674,7 +2007,53 @@ void processCommand(String cmd) {
     Serial.println();
   }
 #endif
-  if (cmdBase == "MOVER:ADELANTE") {
+  bool wheelSignedCmd = false;
+  bool wheelIsA = true;
+  int32_t wheelSignedEnc = 0;
+  bool wheelPairCmd = false;
+  uint8_t wheelPairKind = 0;
+  uint32_t wheelPairA = 0;
+  uint32_t wheelPairB = 0;
+  if (cmd.startsWith("MOTOR:")) {
+    wheelSignedCmd = parseMotorWheelSignedCmd(cmd, wheelIsA, wheelSignedEnc);
+  } else if (cmd.startsWith("MOVEW:")) {
+    wheelPairCmd = parseMoveWheelPairCmd(cmd, wheelPairKind, wheelPairA, wheelPairB);
+  }
+  if (wheelPairCmd) {
+#if USE_WHEEL_ENCODERS
+    encoderResetCounts();
+    g_motorWheelStartA = encoderReadForMotorA();
+    g_motorWheelStartB = encoderReadForMotorB();
+#endif
+    g_motorWheelPairActive = true;
+    g_motorWheelEncMag = 0;
+    g_motorWheelTargetA = wheelPairA;
+    g_motorWheelTargetB = wheelPairB;
+    g_motorWheelMoveStartMs = millis();
+    if (wheelPairKind == 1) {
+      motorAForward();
+      motorBForward();
+    } else if (wheelPairKind == 2) {
+      motorABackward();
+      motorBBackward();
+    } else if (wheelPairKind == 3) {
+      motorABackward();
+      motorBForward();
+    } else if (wheelPairKind == 4) {
+      motorAForward();
+      motorBBackward();
+    }
+    movingA = true;
+    movingB = true;
+#if SERIAL_LOG_MOV
+    Serial.print(F("[MOV] MOVEW kind="));
+    Serial.print(wheelPairKind);
+    Serial.print(F(" A="));
+    Serial.print(wheelPairA);
+    Serial.print(F(" B="));
+    Serial.println(wheelPairB);
+#endif
+  } else if (cmdBase == "MOVER:ADELANTE") {
     g_moverPulseKind = 1;
 #if ENCODER_DRIVE_CONTROL
     g_moverEncTarget = encTargetForMove;
@@ -1726,29 +2105,76 @@ void processCommand(String cmd) {
     turnRight();
     moving = true;
     moveEndTime = millis() + pulseMsForMove;
+  } else if (wheelSignedCmd) {
+#if USE_WHEEL_ENCODERS
+    encoderResetCounts();
+    g_motorWheelStartA = encoderReadRawA();
+    g_motorWheelStartB = encoderReadRawB();
+#endif
+    g_motorWheelPairActive = false;
+    g_motorWheelEncMag = (uint32_t)(wheelSignedEnc < 0 ? -wheelSignedEnc : wheelSignedEnc);
+    g_motorWheelMoveStartMs = millis();
+    const bool wheelFwd = wheelSignedEnc > 0;
+    if (wheelIsA) {
+      stopMotorB();
+      movingB = false;
+      if (wheelFwd) {
+        motorAForward();
+      } else {
+        motorABackward();
+      }
+      movingA = true;
+    } else {
+      stopMotorA();
+      movingA = false;
+      if (wheelFwd) {
+        motorBForward();
+      } else {
+        motorBBackward();
+      }
+      movingB = true;
+    }
+#if SERIAL_LOG_MOV
+    Serial.print(F("[MOV] MOTOR "));
+    Serial.print(wheelIsA ? 'A' : 'B');
+    Serial.print(F(" encTarget="));
+    Serial.println(wheelSignedEnc);
+#endif
   } else if (cmdBase == "MOTOR:A:ADELANTE") {
     motorAForward();
+    g_motorWheelPairActive = false;
+    g_motorWheelEncMag = 0;
     movingA = true;
     motorAEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOTOR:A:ATRAS") {
     motorABackward();
+    g_motorWheelPairActive = false;
+    g_motorWheelEncMag = 0;
     movingA = true;
     motorAEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOTOR:A:DETENER") {
     stopMotorA();
     movingA = false;
+    g_motorWheelPairActive = false;
+    g_motorWheelEncMag = 0;
     client.println("LISTO");
   } else if (cmdBase == "MOTOR:B:ADELANTE") {
     motorBForward();
+    g_motorWheelPairActive = false;
+    g_motorWheelEncMag = 0;
     movingB = true;
     motorBEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOTOR:B:ATRAS") {
     motorBBackward();
+    g_motorWheelPairActive = false;
+    g_motorWheelEncMag = 0;
     movingB = true;
     motorBEndTime = millis() + pulseMsForMove;
   } else if (cmdBase == "MOTOR:B:DETENER") {
     stopMotorB();
     movingB = false;
+    g_motorWheelPairActive = false;
+    g_motorWheelEncMag = 0;
     client.println("LISTO");
   } else if (cmd == "DETENER") {
     stopMotors();
@@ -1758,6 +2184,8 @@ void processCommand(String cmd) {
     g_postTurnSettling = false;
     movingA = false;
     movingB = false;
+    g_motorWheelPairActive = false;
+    g_motorWheelEncMag = 0;
     client.println("LISTO");
   } else if (cmd == "PING") {
     client.println("PONG");
@@ -1769,6 +2197,14 @@ void processCommand(String cmd) {
     client.println("LISTO");
     client.flush();
     mirrorLastReadToSerialAfterTcp();
+  } else if (cmd == "ENC") {
+#if USE_WHEEL_ENCODERS
+    emitEncToClient();
+#else
+    client.println(F("ENC:DISABLED"));
+#endif
+    client.println("LISTO");
+    client.flush();
   } else if (cmd == "STATUS") {
     client.println("IP:" + WiFi.localIP().toString());
     client.println("RSSI:" + String(WiFi.RSSI()));

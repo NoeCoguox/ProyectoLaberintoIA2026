@@ -100,7 +100,7 @@ def _tcp_error_retryable(err: str | None) -> bool:
 def _move_cmd_timeout_s(ms_val: int | None, pulses: int | None = None) -> float:
     """Espera TCP: pulso + margen; tope para no bloquear Flask demasiado."""
     base_ms = int(ms_val) if ms_val is not None else 5000
-    if pulses is not None and pulses > 0:
+    if pulses is not None and pulses != 0:
         base_ms = max(base_ms, 8000)
     return min(TCP_MOVE_CMD_TIMEOUT_MAX_S, max(TCP_MOVE_CMD_TIMEOUT_S, base_ms / 1000.0 + 18.0))
 
@@ -424,6 +424,27 @@ def laberinto_fisico_alias_snake_case():
     return redirect("/laberinto-fisico", code=308)
 
 
+@app.route("/api/enc")
+def api_enc():
+    """Solo encoders FC-03 (comando ENC, sin servo ni TCS)."""
+    host = (request.args.get("host") or "").strip()
+    port = request.args.get("port", type=int) or DEFAULT_PORT
+    if not host:
+        return jsonify({"ok": False, "error": "Falta host"}), 400
+    lines, err = tcp_robot_command(host, port, "ENC", timeout_s=8.0)
+    enc = parse_enc_from_raw_lines(lines)
+    stall = any("ERR:ENC_SIN_PULSOS" in ln.upper() for ln in lines)
+    return jsonify(
+        {
+            "ok": err is None and not stall,
+            "error": err or ("Encoder sin pulsos (revisar FC-03 / cable)" if stall else None),
+            "raw_lines": lines,
+            "enc": enc,
+            "enc_stall": stall,
+        }
+    )
+
+
 @app.route("/api/leer")
 def api_leer():
     host = (request.args.get("host") or "").strip()
@@ -557,10 +578,18 @@ def api_mover():
     ms = request.args.get("ms", type=int)
     ms_max = request.args.get("ms_max", type=int)
     pulses = request.args.get("pulses", type=int)
+    pulses_a = request.args.get("pulses_a", type=int)
+    pulses_b = request.args.get("pulses_b", type=int)
     move_mode = "detener" if tcp_cmd == "DETENER" else "ms"
 
     if tcp_cmd != "DETENER":
-        if pulses is not None and pulses > 0:
+        if pulses_a is not None and pulses_b is not None:
+            pulses_a = max(1, min(65535, int(pulses_a)))
+            pulses_b = max(1, min(65535, int(pulses_b)))
+            tcp_cmd = f"MOVEW:{cmd_map[d].split(':', 1)[1]}:A{pulses_a}:B{pulses_b}"
+            move_mode = "wheel_pair"
+            ms = None
+        elif pulses is not None and pulses > 0:
             pulses = max(1, min(65535, int(pulses)))
             tcp_cmd = f"{tcp_cmd}:E{pulses}"
             move_mode = "encoder"
@@ -573,21 +602,32 @@ def api_mover():
             tcp_cmd = f"{tcp_cmd}:{ms}"
 
     timeout_ms = ms_max if move_mode == "encoder" else ms
-    lines, err = tcp_robot_command_retry(
-        host, port, tcp_cmd, timeout_s=_move_cmd_timeout_s(timeout_ms, pulses)
-    )
+    if move_mode == "wheel_pair":
+        timeout_s = TCP_MOVE_CMD_TIMEOUT_MAX_S
+    else:
+        timeout_s = _move_cmd_timeout_s(timeout_ms, pulses)
+    lines, err = tcp_robot_command_retry(host, port, tcp_cmd, timeout_s=timeout_s)
     enc = parse_enc_from_raw_lines(lines)
+    stall = any("ERR:ENC_SIN_PULSOS" in ln.upper() for ln in lines)
     return jsonify(
         {
-            "ok": err is None,
-            "error": err,
+            "ok": err is None and not stall,
+            "error": err
+            or (
+                "Ningún encoder contó pulsos durante el movimiento"
+                if stall
+                else None
+            ),
             "raw_lines": lines,
             "dir": d,
             "ms": ms,
             "ms_max": ms_max,
             "pulses": pulses,
+            "pulses_a": pulses_a,
+            "pulses_b": pulses_b,
             "move_mode": move_mode,
             "enc": enc,
+            "enc_stall": stall,
             "tcp_cmd": tcp_cmd,
         }
     )
@@ -595,29 +635,75 @@ def api_mover():
 
 @app.route("/api/motor")
 def api_motor():
-    """wheel=a|b, dir=adelante|atras|detener — MOTOR:A:* / MOTOR:B:*. Opcional: ms=50..60000 (pulso ADELANTE/ATRAS)."""
+    """
+    wheel=a|b
+    Modo pulsos firmados: pulses=-65535..65535 (≠0) → MOTOR:A:E±n (para al |n| en encoder, sin ms).
+    Modo tiempo: dir=adelante|atras|detener — opcional ms=50..60000.
+    """
     host = (request.args.get("host") or "").strip()
     port = request.args.get("port", type=int) or DEFAULT_PORT
     wheel = (request.args.get("wheel") or "").strip().lower()
     d = (request.args.get("dir") or "").strip().lower()
+    pulses = request.args.get("pulses", type=int)
+    ms = request.args.get("ms", type=int)
+    ms_max = request.args.get("ms_max", type=int)
     if not host:
         return jsonify({"ok": False, "error": "Falta host"}), 400
     if wheel not in ("a", "b"):
         return jsonify({"ok": False, "error": "wheel debe ser a o b"}), 400
-    dir_tcp = {"adelante": "ADELANTE", "atras": "ATRAS", "detener": "DETENER"}.get(d)
-    if not dir_tcp:
-        return jsonify({"ok": False, "error": "dir inválido (adelante|atras|detener)"}), 400
     label = "A" if wheel == "a" else "B"
-    tcp_cmd = f"MOTOR:{label}:{dir_tcp}"
-    ms = request.args.get("ms", type=int)
-    if dir_tcp != "DETENER" and ms is not None:
-        ms = max(50, min(60000, int(ms)))
-        tcp_cmd = f"{tcp_cmd}:{ms}"
+    move_mode = "ms"
 
-    lines, err = tcp_robot_command_retry(
-        host, port, tcp_cmd, timeout_s=_move_cmd_timeout_s(ms)
+    if pulses is not None and pulses != 0:
+        pulses = max(-65535, min(65535, int(pulses)))
+        tcp_cmd = f"MOTOR:{label}:E{pulses}"
+        move_mode = "encoder_signed"
+        timeout_ms = None
+        ms = None
+    else:
+        dir_tcp = {"adelante": "ADELANTE", "atras": "ATRAS", "detener": "DETENER"}.get(d)
+        if not dir_tcp:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "dir inválido (adelante|atras|detener) o indicá pulses≠0",
+                }
+            ), 400
+        tcp_cmd = f"MOTOR:{label}:{dir_tcp}"
+        if dir_tcp != "DETENER" and ms is not None:
+            ms = max(50, min(60000, int(ms)))
+            tcp_cmd = f"{tcp_cmd}:{ms}"
+        timeout_ms = ms
+        pulses = None
+
+    if move_mode == "encoder_signed":
+        tcp_timeout_s = TCP_MOVE_CMD_TIMEOUT_MAX_S
+    else:
+        tcp_timeout_s = _move_cmd_timeout_s(timeout_ms, pulses)
+    lines, err = tcp_robot_command_retry(host, port, tcp_cmd, timeout_s=tcp_timeout_s)
+    enc = parse_enc_from_raw_lines(lines)
+    stall = any("ERR:ENC_SIN_PULSOS" in ln.upper() for ln in lines)
+    return jsonify(
+        {
+            "ok": err is None and not stall,
+            "error": err
+            or (
+                "Ningún encoder contó pulsos durante el giro (FC-03 en GPIO34/35, pull-up, disco en el eje)"
+                if stall
+                else None
+            ),
+            "raw_lines": lines,
+            "wheel": wheel,
+            "dir": d,
+            "ms": ms,
+            "ms_max": None,
+            "pulses": pulses,
+            "move_mode": move_mode,
+            "enc": enc,
+            "enc_stall": stall,
+            "tcp_cmd": tcp_cmd,
+        }
     )
-    return jsonify({"ok": err is None, "error": err, "raw_lines": lines, "wheel": wheel, "dir": d, "ms": ms})
 
 
 @app.route("/api/whoami")

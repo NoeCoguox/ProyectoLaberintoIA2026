@@ -65,11 +65,15 @@
 
       <h3 class="manual-card__sectitle" id="pulseSectionLabel">Movimiento y lectura de encoders <span class="manual-card__sectag">MOVER</span></h3>
       <p class="manual-mini-hint">
-        Los movimientos van por <strong>milisegundos</strong> (PWM fijo). Los encoders solo se <strong>leen</strong> (línea <code>ENC:</code> en la respuesta). Mismos valores que <em>Laberinto físico</em>.
+        La cruceta puede ir por <strong>pulsos A/B</strong> calibrados. Si desactivás esa opción, vuelve al modo anterior por <strong>milisegundos</strong> o por <code>MOVER:E</code>.
       </p>
       <label class="manual-field manual-field--check">
         <input type="checkbox" id="useEncoderMoves" />
         <span>Enviar pulsos en MOVER (solo si el firmware tiene control por encoder activo)</span>
+      </label>
+      <label class="manual-field manual-field--check">
+        <input type="checkbox" id="useWheelPairMoves" checked />
+        <span>Usar calibración por llanta en las flechas (A/B independientes)</span>
       </label>
       <p class="manual-mini-hint manual-pro-mono" id="manualEncoderCalHint" aria-live="polite"></p>
       <h4 class="manual-card__sectitle manual-card__sectitle--sm">Pulsos encoder por dirección</h4>
@@ -97,6 +101,32 @@
             <label for="movePulseEncDerecha">Derecha</label>
             <input type="number" id="movePulseEncDerecha" data-enc-dir="derecha" min="1" max="65535" step="1" value="38" />
           </div>
+        </div>
+      </div>
+      <h4 class="manual-card__sectitle manual-card__sectitle--sm">Pulsos por llanta para flechas</h4>
+      <p class="manual-mini-hint">
+        Ajustá A/B por cada movimiento. Ejemplo: si al avanzar se tuerce, probá ↑ A=10 y B=12.
+      </p>
+      <div class="manual-wheel-pair-grid" role="group" aria-label="Pulsos por llanta para cada flecha">
+        <div class="manual-wheel-pair-tile">
+          <strong>Arriba</strong>
+          <label>A <input type="number" id="pairPulseAdelanteA" data-pair-dir="adelante" data-pair-wheel="a" min="1" max="65535" step="1" value="10" /></label>
+          <label>B <input type="number" id="pairPulseAdelanteB" data-pair-dir="adelante" data-pair-wheel="b" min="1" max="65535" step="1" value="10" /></label>
+        </div>
+        <div class="manual-wheel-pair-tile">
+          <strong>Abajo</strong>
+          <label>A <input type="number" id="pairPulseAtrasA" data-pair-dir="atras" data-pair-wheel="a" min="1" max="65535" step="1" value="10" /></label>
+          <label>B <input type="number" id="pairPulseAtrasB" data-pair-dir="atras" data-pair-wheel="b" min="1" max="65535" step="1" value="10" /></label>
+        </div>
+        <div class="manual-wheel-pair-tile">
+          <strong>Izquierda</strong>
+          <label>A <input type="number" id="pairPulseIzquierdaA" data-pair-dir="izquierda" data-pair-wheel="a" min="1" max="65535" step="1" value="8" /></label>
+          <label>B <input type="number" id="pairPulseIzquierdaB" data-pair-dir="izquierda" data-pair-wheel="b" min="1" max="65535" step="1" value="8" /></label>
+        </div>
+        <div class="manual-wheel-pair-tile">
+          <strong>Derecha</strong>
+          <label>A <input type="number" id="pairPulseDerechaA" data-pair-dir="derecha" data-pair-wheel="a" min="1" max="65535" step="1" value="8" /></label>
+          <label>B <input type="number" id="pairPulseDerechaB" data-pair-dir="derecha" data-pair-wheel="b" min="1" max="65535" step="1" value="8" /></label>
         </div>
       </div>
       <h4 class="manual-card__sectitle manual-card__sectitle--sm">Tope ms máx. por dirección</h4>
@@ -138,6 +168,65 @@
       <p class="manual-mini-hint">
         Rango 50–60000&nbsp;ms · los giros suelen llevar otros tiempos que el avance. Si ves “ocupado”, pausá <code>LEER</code> en el panel principal: el ESP32 acepta <strong>un</strong> cliente TCP a la vez.
       </p>
+    </section>
+
+    <section class="card manual-card" aria-labelledby="wheelPulseLabel">
+      <div class="manual-wheels-shell">
+        <h2 id="wheelPulseLabel" class="manual-wheels-shell__title">Girar cada llanta (pulsos)</h2>
+        <p class="manual-wheels-shell__lead">
+          Un solo motor a la vez. <strong>Positivo</strong> = adelante del chasis · <strong>negativo</strong> = atrás.
+          Gira hasta contar <code>|pulsos|</code> en el encoder FC-03 y se frena solo ahí (sin tiempo).
+          Comando: <code>MOTOR:A:E±n</code> / <code>MOTOR:B:E±n</code>.
+          Si ningún encoder cuenta, el motor se detiene a los ~2,5&nbsp;s con aviso.
+        </p>
+        <p class="manual-pulse-actions">
+          <button type="button" class="manual-pulse-sync" id="btnWheelEncRead" title="Comando ENC — solo lectura de pulsos">
+            Leer encoders ahora
+          </button>
+          <span class="manual-field__hint" id="wheelEncLive">ENC A=— · B=—</span>
+        </p>
+        <div class="manual-wheels-grid">
+          <article class="manual-wheel-card">
+            <h3 class="manual-wheel-card__name">Llanta A</h3>
+            <p class="manual-wheel-card__meta">Encoder GPIO34 · lado izquierdo del robot</p>
+            <div class="manual-wheel-card__pulse">
+              <label class="manual-wheel-card__pulse-label" for="wheelPulseA">Pulsos (+ / −)</label>
+              <div class="manual-wheel-card__pulse-row">
+                <input type="number" id="wheelPulseA" class="manual-wheel-card__pulse-input" value="30" step="1" min="-65535" max="65535" inputmode="numeric" />
+                <p class="manual-wheel-card__pulse-equiv" id="wheelPulseAHint">adelante</p>
+              </div>
+            </div>
+            <div class="manual-wheel-card__btns">
+              <button type="button" class="move-btn move-btn--primary wheel-btn" id="btnWheelARun" data-wheel="a">
+                <span class="move-btn__glyph" aria-hidden="true">↻</span><span class="move-btn__cap">Girar llanta A</span>
+              </button>
+              <button type="button" class="move-btn move-btn--stop wheel-btn" id="btnWheelAStop" data-wheel="a" data-dir="detener">
+                <span class="move-btn__glyph" aria-hidden="true">■</span><span class="move-btn__cap">Detener A</span>
+              </button>
+            </div>
+          </article>
+          <article class="manual-wheel-card">
+            <h3 class="manual-wheel-card__name">Llanta B</h3>
+            <p class="manual-wheel-card__meta">Encoder GPIO35 · lado derecho del robot</p>
+            <div class="manual-wheel-card__pulse">
+              <label class="manual-wheel-card__pulse-label" for="wheelPulseB">Pulsos (+ / −)</label>
+              <div class="manual-wheel-card__pulse-row">
+                <input type="number" id="wheelPulseB" class="manual-wheel-card__pulse-input" value="30" step="1" min="-65535" max="65535" inputmode="numeric" />
+                <p class="manual-wheel-card__pulse-equiv" id="wheelPulseBHint">adelante</p>
+              </div>
+            </div>
+            <div class="manual-wheel-card__btns">
+              <button type="button" class="move-btn move-btn--primary wheel-btn" id="btnWheelBRun" data-wheel="b">
+                <span class="move-btn__glyph" aria-hidden="true">↻</span><span class="move-btn__cap">Girar llanta B</span>
+              </button>
+              <button type="button" class="move-btn move-btn--stop wheel-btn" id="btnWheelBStop" data-wheel="b" data-dir="detener">
+                <span class="move-btn__glyph" aria-hidden="true">■</span><span class="move-btn__cap">Detener B</span>
+              </button>
+            </div>
+          </article>
+        </div>
+        <p id="wheelMsg" class="msg manual-wheel-msg" role="status"></p>
+      </div>
     </section>
 
     <section class="card manual-card manual-card--controls" aria-labelledby="movePadLabel">
@@ -188,6 +277,7 @@
     const hostEl = document.getElementById("host");
     const portEl = document.getElementById("port");
     const useEncoderMovesEl = document.getElementById("useEncoderMoves");
+    const useWheelPairMovesEl = document.getElementById("useWheelPairMoves");
     const manualEncoderCalHintEl = document.getElementById("manualEncoderCalHint");
 
     const ENC_IDS = {
@@ -218,6 +308,42 @@
       derecha: "movePulseHintDerecha",
     };
 
+    const PAIR_IDS = {
+      adelante: { a: "pairPulseAdelanteA", b: "pairPulseAdelanteB" },
+      atras: { a: "pairPulseAtrasA", b: "pairPulseAtrasB" },
+      izquierda: { a: "pairPulseIzquierdaA", b: "pairPulseIzquierdaB" },
+      derecha: { a: "pairPulseDerechaA", b: "pairPulseDerechaB" },
+    };
+
+    const PAIR_DEFAULTS = {
+      adelante: { a: 10, b: 10 },
+      atras: { a: 10, b: 10 },
+      izquierda: { a: 8, b: 8 },
+      derecha: { a: 8, b: 8 },
+    };
+
+    function pairStorageKey(dir, wheel) {
+      return "manualMoveWheelPair_" + dir + "_" + wheel;
+    }
+
+    function useWheelPairMoves() {
+      if (!useWheelPairMovesEl) return false;
+      return !!useWheelPairMovesEl.checked;
+    }
+
+    function parsePairPulse(dir, wheel) {
+      const id = PAIR_IDS[dir] && PAIR_IDS[dir][wheel];
+      const fallback = (PAIR_DEFAULTS[dir] && PAIR_DEFAULTS[dir][wheel]) || 10;
+      const el = id ? document.getElementById(id) : null;
+      const n = parseInt(el && el.value, 10);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.max(1, Math.min(65535, n));
+    }
+
+    function getPairPulses(dir) {
+      return { a: parsePairPulse(dir, "a"), b: parsePairPulse(dir, "b") };
+    }
+
     function syncManualEncoderPrefs() {
       if (typeof RobotMoveCal === "undefined") return;
       if (useEncoderMovesEl) RobotMoveCal.setUseEncoderMoves(!!useEncoderMovesEl.checked);
@@ -241,6 +367,15 @@
         Object.keys(PULSE_LS).forEach(function (d) {
           const el = document.getElementById(PULSE_IDS[d]);
           if (el) localStorage.setItem(PULSE_LS[d], el.value);
+        });
+        if (useWheelPairMovesEl) {
+          localStorage.setItem("manualUseWheelPairMoves", useWheelPairMovesEl.checked ? "1" : "0");
+        }
+        Object.keys(PAIR_IDS).forEach(function (d) {
+          ["a", "b"].forEach(function (w) {
+            const el = document.getElementById(PAIR_IDS[d][w]);
+            if (el) localStorage.setItem(pairStorageKey(d, w), el.value);
+          });
         });
         syncManualEncoderPrefs();
       } catch (_) {}
@@ -301,6 +436,20 @@
           const saved = localStorage.getItem(PULSE_LS[d]);
           el.value = saved != null && saved !== "" ? saved : base;
         });
+        if (useWheelPairMovesEl) {
+          const pairOn = localStorage.getItem("manualUseWheelPairMoves");
+          useWheelPairMovesEl.checked = pairOn == null ? true : pairOn === "1";
+        }
+        Object.keys(PAIR_IDS).forEach(function (d) {
+          ["a", "b"].forEach(function (w) {
+            const el = document.getElementById(PAIR_IDS[d][w]);
+            if (!el) return;
+            const saved = localStorage.getItem(pairStorageKey(d, w));
+            if (saved != null && saved !== "") {
+              el.value = saved;
+            }
+          });
+        });
         if (typeof RobotMoveCal !== "undefined") {
           if (useEncoderMovesEl) useEncoderMovesEl.checked = RobotMoveCal.useEncoderMoves();
           RobotMoveCal.DIRS.forEach(function (d) {
@@ -312,6 +461,13 @@
         }
         updatePulseSecHint();
         syncManualEncoderPrefs();
+        ["a", "b"].forEach(function (w) {
+          const el = document.getElementById(WHEEL_PULSE_IDS[w]);
+          if (!el) return;
+          const saved = localStorage.getItem(WHEEL_PULSE_LS[w]);
+          if (saved != null && saved !== "") el.value = saved;
+        });
+        updateWheelPulseHints();
       } catch (_) {}
     }
 
@@ -319,7 +475,7 @@
 
     const PING_INTERVAL_MS = 2500;
 
-    /** Ping TCP relay (Flask); evita paralelo con mover para no colisionar el único socket del ESP32. */
+    /** Ping TCP relay (Flask); el firmware responde PING aun mientras mueve. */
     let pingTcpTimer = null;
     let pingInFlight = false;
 
@@ -351,7 +507,7 @@
         pingStripSetIdle("Escribí la IP del ESP32");
         return;
       }
-      if (moveBusy || pingInFlight) return;
+      if (pingInFlight) return;
       pingInFlight = true;
       strip.classList.remove("manual-ping-live--idle", "manual-ping-live--ok", "manual-ping-live--fail", "manual-ping-live--busy");
       strip.classList.add("manual-ping-live--wait");
@@ -385,7 +541,6 @@
         pingStripSetIdle("Escribí la IP del ESP32");
         return;
       }
-      if (moveBusy) return;
       pingTcpOnce();
       pingTcpTimer = setInterval(pingTcpOnce, PING_INTERVAL_MS);
     }
@@ -395,27 +550,108 @@
     function schedulePingRestart() {
       clearTimeout(pingDeb);
       pingDeb = setTimeout(function () {
-        if (!moveBusy) resumePingTcp();
+        resumePingTcp();
       }, 350);
+    }
+
+    const WHEEL_PULSE_LS = { a: "manualWheelPulseA", b: "manualWheelPulseB" };
+    const WHEEL_PULSE_IDS = { a: "wheelPulseA", b: "wheelPulseB" };
+    const WHEEL_HINT_IDS = { a: "wheelPulseAHint", b: "wheelPulseBHint" };
+
+    function parseWheelPulses(wheel) {
+      const el = document.getElementById(WHEEL_PULSE_IDS[wheel]);
+      if (!el) return null;
+      const n = parseInt(el.value, 10);
+      if (!Number.isFinite(n) || n === 0) return null;
+      return Math.max(-65535, Math.min(65535, n));
+    }
+
+    function updateWheelPulseHints() {
+      ["a", "b"].forEach(function (w) {
+        const hid = document.getElementById(WHEEL_HINT_IDS[w]);
+        const p = parseWheelPulses(w);
+        if (!hid) return;
+        if (p == null) hid.textContent = "indicá pulsos ≠ 0";
+        else if (p > 0) hid.textContent = "+" + p + " · adelante";
+        else hid.textContent = String(p) + " · atrás";
+      });
     }
 
     function setMoveBusy(busy) {
       moveBusy = busy;
-      document.querySelectorAll(".move-btn").forEach((btn) => {
+      document.querySelectorAll(".move-btn, .wheel-btn").forEach((btn) => {
         btn.disabled = busy;
       });
-      const strip = document.getElementById("manualPingLive");
-      const msEl = document.getElementById("manualPingMs");
-      const cap = document.getElementById("manualPingCaption");
-      if (busy) {
-        pausePingTcp();
-        if (strip && msEl && cap) {
-          strip.className = "manual-ping-live manual-ping-live--busy";
-          msEl.textContent = "—";
-          cap.textContent = "Movimiento en curso · ping en pausa";
-        }
-      } else {
+      if (!busy) {
         resumePingTcp();
+      }
+    }
+
+    async function robotWheel(wheel, opts) {
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      const msg = document.getElementById("wheelMsg");
+      if (!host) {
+        msg.textContent = "Indicá la IP del ESP32 arriba.";
+        msg.className = "msg err manual-wheel-msg";
+        return;
+      }
+      if (moveBusy) return;
+      setMoveBusy(true);
+      let url =
+        "/api/motor?host=" +
+        encodeURIComponent(host) +
+        "&port=" +
+        port +
+        "&wheel=" +
+        encodeURIComponent(wheel);
+      if (opts && opts.detener) {
+        msg.textContent = "Deteniendo llanta " + wheel.toUpperCase() + "…";
+        url += "&dir=detener";
+      } else {
+        const pulses = parseWheelPulses(wheel);
+        if (pulses == null) {
+          msg.textContent = "Escribí pulsos distintos de cero (positivo o negativo).";
+          msg.className = "msg err manual-wheel-msg";
+          setMoveBusy(false);
+          return;
+        }
+        msg.textContent = "Llanta " + wheel.toUpperCase() + " · " + pulses + " pulsos…";
+        url += "&pulses=" + String(pulses);
+        try {
+          localStorage.setItem(WHEEL_PULSE_LS[wheel], String(pulses));
+        } catch (_) {}
+      }
+      msg.className = "msg manual-wheel-msg";
+      try {
+        const res = await fetch(url);
+        const j = await res.json();
+        if (!j.ok) {
+          msg.textContent = j.error || "Error en el comando";
+          msg.className = "msg err manual-wheel-msg";
+          if (j.enc_stall) {
+            msg.textContent =
+              "Ningún encoder contó pulsos durante el giro. Probá «Leer encoders» girando la rueda a mano; revisá FC-03 en GPIO34 (A) o GPIO35 (B).";
+          }
+        } else {
+          let okTxt = opts && opts.detener ? "Llanta detenida." : "Listo: llanta " + wheel.toUpperCase() + ".";
+          if (j.tcp_cmd) okTxt += " · " + j.tcp_cmd;
+          if (j.enc && typeof RobotMoveCal !== "undefined") {
+            const es = RobotMoveCal.formatEncStatus(j.enc);
+            if (es) okTxt += " · " + es;
+          } else if (j.enc && (j.enc.a != null || j.enc.b != null)) {
+            okTxt += " · ENC A=" + (j.enc.a != null ? j.enc.a : "—") + " B=" + (j.enc.b != null ? j.enc.b : "—");
+          }
+          msg.textContent = okTxt;
+          msg.className = "msg ok manual-wheel-msg";
+          const live = document.getElementById("wheelEncLive");
+          if (live && j.enc) live.textContent = formatWheelEncLive(j.enc);
+        }
+      } catch (e) {
+        msg.textContent = String(e);
+        msg.className = "msg err manual-wheel-msg";
+      } finally {
+        setMoveBusy(false);
       }
     }
 
@@ -441,7 +677,10 @@
         encodeURIComponent(dir);
       if (dir !== "detener") {
         syncManualEncoderPrefs();
-        if (typeof RobotMoveCal !== "undefined") {
+        if (useWheelPairMoves() && PAIR_IDS[dir]) {
+          const pair = getPairPulses(dir);
+          url += "&pulses_a=" + String(pair.a) + "&pulses_b=" + String(pair.b);
+        } else if (typeof RobotMoveCal !== "undefined") {
           url = RobotMoveCal.appendMoverQuery(url, dir);
         } else {
           url += "&ms=" + String(getPulseMsForDir(dir));
@@ -461,6 +700,8 @@
             if (es) okTxt += " · " + es;
           } else if (j.move_mode === "encoder") {
             okTxt += " · encoder E" + (j.pulses || "?");
+          } else if (j.move_mode === "wheel_pair") {
+            okTxt += " · A=" + (j.pulses_a || "?") + " B=" + (j.pulses_b || "?");
           }
           msg.textContent = okTxt;
           msg.className = "msg ok move-msg manual-move-msg";
@@ -473,7 +714,7 @@
       }
     }
 
-    document.querySelectorAll(".move-btn").forEach((btn) => {
+    document.querySelectorAll(".move-btn:not(.wheel-btn)").forEach((btn) => {
       btn.addEventListener("click", () => {
         savePrefs();
         const d = btn.getAttribute("data-dir");
@@ -481,6 +722,71 @@
       });
     });
 
+    function formatWheelEncLive(enc) {
+      if (!enc) return "ENC A=— · B=—";
+      const a = enc.a != null ? enc.a : "—";
+      const b = enc.b != null ? enc.b : "—";
+      return "ENC A=" + a + " · B=" + b;
+    }
+
+    async function readWheelEncoders() {
+      const host = hostEl.value.trim();
+      const port = parseInt(portEl.value, 10) || 8888;
+      const live = document.getElementById("wheelEncLive");
+      if (!host) {
+        if (live) live.textContent = "Falta IP del ESP32";
+        return;
+      }
+      if (moveBusy) return;
+      if (live) live.textContent = "Leyendo…";
+      try {
+        const res = await fetch(
+          "/api/enc?host=" + encodeURIComponent(host) + "&port=" + port
+        );
+        const j = await res.json();
+        if (live) {
+          live.textContent = j.ok
+            ? formatWheelEncLive(j.enc)
+            : j.error || "Error ENC";
+        }
+      } catch (e) {
+        if (live) live.textContent = String(e);
+      }
+    }
+
+    document.getElementById("btnWheelEncRead")?.addEventListener("click", function () {
+      savePrefs();
+      readWheelEncoders();
+    });
+
+    document.getElementById("btnWheelARun")?.addEventListener("click", function () {
+      savePrefs();
+      robotWheel("a");
+    });
+    document.getElementById("btnWheelBRun")?.addEventListener("click", function () {
+      savePrefs();
+      robotWheel("b");
+    });
+    document.getElementById("btnWheelAStop")?.addEventListener("click", function () {
+      savePrefs();
+      robotWheel("a", { detener: true });
+    });
+    document.getElementById("btnWheelBStop")?.addEventListener("click", function () {
+      savePrefs();
+      robotWheel("b", { detener: true });
+    });
+
+    ["a", "b"].forEach(function (w) {
+      const el = document.getElementById(WHEEL_PULSE_IDS[w]);
+      if (el) {
+        el.addEventListener("input", function () {
+          updateWheelPulseHints();
+          try {
+            localStorage.setItem(WHEEL_PULSE_LS[w], el.value);
+          } catch (_) {}
+        });
+      }
+    });
     hostEl.addEventListener("input", function () {
       savePrefs();
       schedulePingRestart();
@@ -513,6 +819,15 @@
         savePrefs();
       });
     }
+    if (useWheelPairMovesEl) {
+      useWheelPairMovesEl.addEventListener("change", savePrefs);
+    }
+    Object.keys(PAIR_IDS).forEach(function (d) {
+      ["a", "b"].forEach(function (w) {
+        const el = document.getElementById(PAIR_IDS[d][w]);
+        if (el) el.addEventListener("input", savePrefs);
+      });
+    });
 
     var btnPulseSyncAll = document.getElementById("btnPulseSyncAll");
     if (btnPulseSyncAll) {
