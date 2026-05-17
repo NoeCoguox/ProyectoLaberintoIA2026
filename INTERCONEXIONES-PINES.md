@@ -135,6 +135,65 @@ Usa el pin **DO** (salida digital del comparador). **AO** no hace falta. El firm
 
 **Mecánica:** necesitás un disco con agujeros (o pestañas) que corte la ranura IR del FC-03 cuando la rueda gira; sin eso no hay pulsos y no hay corrección.
 
+### 6.1 Balance post-MOVER / post-MOVEW (recto): retroceso por pulsos
+
+Funciona tras cualquier orden recta (kind 1 = `ADELANTE`, kind 2 = `ATRAS`):
+
+- **`MOVER:ADELANTE` / `MOVER:ATRAS`** (cruceta por tiempo o por pulsos `:E…`). La diferencia esperada es **0** (el firmware quiere `A == B`).
+- **`MOVEW:ADELANTE:A…:B…` / `MOVEW:ATRAS:A…:B…`** (cruceta de la web cuando están activados los pulsos por flecha). La diferencia esperada es `targetA − targetB`. Si configurás `↑ A=10 B=10` y por inercia queda `A=15 B=11`, el balance hace que **A retroceda 4 pulsos** (no toca la diferencia que vos quisiste tener entre las ruedas).
+
+Reglas:
+
+- Calcula `actualDiff = A − B`, `err = actualDiff − expectedDiff`. Si **`|err| ≥ ENCODER_BALANCE_MIN_DIFF`** (2 por defecto), la rueda que sobrepasó retrocede `|err|` pulsos en sentido contrario al del MOVE original.
+- En **giros (`IZQUIERDA`/`DERECHA`)** la diferencia entre A y B es geometría del giro, no error: el balance **no se aplica** (el firmware sigue con `POST_TURN_SETTLE_MS` si tu config lo usa).
+- Si pasa `ENCODER_BALANCE_TIMEOUT_MS` (1500 ms por defecto) sin alcanzar la meta, se corta y se manda `LISTO` igual; el log USB lo marca `[BAL] TIMEOUT`.
+
+**Importante con los contadores:** los FC-03 sólo cuentan flancos (no saben dirección), así que **el contador del encoder sólo crece**. Si A=20 B=28 y B retrocede 8, el ENC final será A=20, B=36 (Δ=−16) — físicamente la rueda B sí dio los 8 pulsos atrás. Para confirmar que el balance corrió sin depender de Δ, usá la línea **`BAL:fin:OK:rueda=…:delta=…/…:A=…:B=…`** (el panel ya la muestra como `BAL B retrocedió 8 pulsos`).
+
+Knobs en `FirmwareRobotLaberinto.ino` (recompilar para cambiarlos):
+
+| Define | Default | Qué hace |
+|--------|---------|----------|
+| `ENCODER_POST_MOVE_BALANCE` | `1` | Compila la fase de balance. `0` = la elimina. |
+| `ENCODER_BALANCE_MIN_DIFF` | `2` | Umbral para activar (ignora ruido de 1 pulso). |
+| `ENCODER_BALANCE_PWM` | `130` | PWM con que retrocede la rueda que sobró. |
+| `ENCODER_BALANCE_TIMEOUT_MS` | `1500` | Tope duro de la fase. |
+
+**Comandos TCP runtime (sin recompilar):**
+
+| Comando | Respuesta |
+|---------|-----------|
+| `BALANCE:0` (o `BALANCE:OFF`) | `OK:BALANCE off` + `LISTO`. Apaga el balance hasta el próximo reinicio. |
+| `BALANCE:1` (o `BALANCE:ON`) | `OK:BALANCE on` + `LISTO`. |
+| `BALANCE` (o `BALANCE:STATUS`) | `BALANCE:enabled=…:active=…:mindiff=…:pwm=…:timeout_ms=…` + `LISTO`. |
+
+**Cómo probarlo desde el panel web (rápido):**
+
+1. Subí el firmware nuevo al ESP32. En el Monitor serie deberías leer:
+   `Balance post-MOVER (recto): ON min_diff=2 pwm=130 timeout=1500 ms — comandos: BALANCE:0/1/STATUS`.
+2. **Probar el retroceso por encoder aislado** (sin balance, prueba directa de pulsos negativos):
+   - En el panel manual, sección **Llanta A**, escribí `PULSOS = -5` y apretá **GIRAR LLANTA A**. La rueda A tiene que girar 5 pulsos hacia atrás y parar sola. Repetí con **Llanta B** (`-5` y **GIRAR LLANTA B**). Esto confirma que `MOTOR:A:E-N` funciona — es el mismo motor primitivo que usa el balance.
+3. **Probar el balance automático tras MOVEW** (cruceta con pulsos por flecha):
+   - Configurá `↑ A=10 B=10` (mismos pulsos para las dos llantas) y apretá **↑ ARRIBA**.
+   - Cuando termine, en el banner inferior tenés que leer algo así:
+     `MOVER adelante — LISTO · ENC A=12 B=14 Δ=-2 PWM 0/0 · BAL B retrocedió 2 pulsos (Δreal -2 · Δesperado 0)`.
+   - Si querés "forzar" desbalance para verificarlo, sube algo bajo una rueda o tapá un FC-03 unos pulsos: cuando vuelvas a apretar ↑ tiene que aparecer `BAL …`.
+4. **Probar el balance en MOVER por tiempo (sin pulsos por flecha):**
+   - **Apagá** "PULSOS POR LLANTA PARA FLECHAS" en el panel y apretá ↑ con `ms=600` (el panel ya manda `MOVER:ADELANTE:600`).
+   - Banner: `MOVER adelante — LISTO · ENC A=20 B=28 Δ=-8 PWM 0/0 · BAL B retrocedió 8 pulsos (Δreal -8 · Δesperado 0)`.
+5. **Configuración intencionalmente desigual** (no se debe corregir):
+   - Configurá `↑ A=25 B=10` (queremos a propósito que A dé 15 más que B). Apretá ↑.
+   - El banner debería NO incluir `BAL …` (la `expectedDiff = 15` se respeta; sólo se compensan derivas mayores al umbral).
+6. **Apagar el balance en caliente** (para comparar): por una terminal TCP (telnet a la IP en puerto 8888) mandá `BALANCE:0`. Repetí ↑ y ahora el banner queda con `Δ ≠ 0` y sin `BAL …`. Volvé a encender con `BALANCE:1`.
+
+**Importante:** los FC-03 cuentan flancos sin distinguir dirección, así que el contador del encoder **sólo crece**. Si A=20 B=28 y B retrocede 8, el ENC final será **A=20 B=36 (Δ=−16)** — físicamente B sí retrocedió, simplemente el contador subió igual. Por eso el panel muestra la línea `BAL B retrocedió 8 pulsos`: es la verdad del movimiento físico aunque la `Δ` numérica empeore.
+
+**Si el banner muestra `BAL B TIMEOUT (0/8 pulsos)`** (o cualquier `delta=0/…`):
+
+- El motor no rompe rozamiento estático con `ENCODER_BALANCE_PWM=130`. Subílo a `160–180` y reflasheá.
+- Revisá el FC-03 de esa rueda: girando la rueda a mano debe parpadear el LED de señal del módulo.
+- Confirmá conexionado: `DO` de la llanta A → **GPIO34**, llanta B → **GPIO35**.
+
 ---
 
 ## 7. Diagrama lógico (quién va a quién)

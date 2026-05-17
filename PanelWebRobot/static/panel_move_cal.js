@@ -177,6 +177,100 @@
     return s;
   }
 
+  function parseBalanceFromRawLines(lines) {
+    const out = {
+      ran: false,
+      ok: null,
+      timeout: false,
+      wheel: null,
+      err: null,
+      target: null,
+      delta: null,
+      actualDiff: null,
+      expectedDiff: null,
+      finalA: null,
+      finalB: null,
+      pwm: null,
+    };
+    if (!lines || !lines.length) return out;
+    for (let i = 0; i < lines.length; i++) {
+      const line = String(lines[i] || "");
+      if (!line.toUpperCase().startsWith("BAL:")) continue;
+      out.ran = true;
+      const mWheel = line.match(/RUEDA=([AB])/i);
+      if (mWheel) out.wheel = mWheel[1].toUpperCase();
+      const mTarget = line.match(/TARGET=(-?\d+)/i);
+      if (mTarget) out.target = parseInt(mTarget[1], 10);
+      const mPwm = line.match(/PWM=(\d+)/i);
+      if (mPwm) out.pwm = parseInt(mPwm[1], 10);
+      const mErr = line.match(/ERR=(-?\d+)/i);
+      if (mErr) out.err = parseInt(mErr[1], 10);
+      const mActual = line.match(/ACTUALDIFF=(-?\d+)/i);
+      if (mActual) out.actualDiff = parseInt(mActual[1], 10);
+      const mExp = line.match(/EXPECTEDDIFF=(-?\d+)/i);
+      if (mExp) out.expectedDiff = parseInt(mExp[1], 10);
+      const mDelta = line.match(/DELTA=(\d+)\/(\d+)/i);
+      if (mDelta) {
+        out.delta = parseInt(mDelta[1], 10);
+        out.target = parseInt(mDelta[2], 10);
+      }
+      const mA = line.match(/:A=(\d+)/i);
+      const mB = line.match(/:B=(\d+)/i);
+      if (mA) out.finalA = parseInt(mA[1], 10);
+      if (mB) out.finalB = parseInt(mB[1], 10);
+      if (/BAL:FIN:OK/i.test(line)) {
+        out.ok = true;
+      } else if (/BAL:FIN:TIMEOUT/i.test(line)) {
+        out.ok = false;
+        out.timeout = true;
+      }
+    }
+    return out;
+  }
+
+  function formatBalanceStatus(bal) {
+    if (!bal || !bal.ran) return "";
+    const wheel = bal.wheel || "?";
+    if (bal.ok === true) {
+      let s =
+        "BAL " +
+        wheel +
+        " retrocedió " +
+        (bal.delta != null ? bal.delta : "?") +
+        " pulsos";
+      if (bal.target != null && bal.target !== bal.delta) {
+        s += "/" + bal.target;
+      }
+      if (bal.actualDiff != null && bal.expectedDiff != null) {
+        s +=
+          " (Δreal " +
+          bal.actualDiff +
+          " · Δesperado " +
+          bal.expectedDiff +
+          ")";
+      }
+      return s;
+    }
+    if (bal.timeout) {
+      return (
+        "BAL " +
+        wheel +
+        " TIMEOUT (" +
+        (bal.delta != null ? bal.delta : "?") +
+        "/" +
+        (bal.target != null ? bal.target : "?") +
+        " pulsos) — revisá FC-03 o subí PWM"
+      );
+    }
+    return (
+      "BAL " +
+      wheel +
+      " arrancó (target " +
+      (bal.target != null ? bal.target : "?") +
+      ")"
+    );
+  }
+
   function calibrationSummaryLine() {
     const encOn = useEncoderMoves();
     const a = getEncPulses("adelante");
@@ -217,6 +311,8 @@
     getMoverApiQuery,
     appendMoverQuery,
     parseEncFromRawLines,
+    parseBalanceFromRawLines,
+    formatBalanceStatus,
     formatEncStatus,
     calibrationSummaryLine,
   };

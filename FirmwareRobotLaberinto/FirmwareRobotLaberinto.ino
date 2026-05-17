@@ -238,6 +238,33 @@ const unsigned long WIFI_RECONNECT_INTERVAL_MS = 5000;
 #ifndef ENCODER_STALL_FAST_PWM
 #define ENCODER_STALL_FAST_PWM 45
 #endif
+
+/* ---------- Balance post-MOVER (recto): A=30 B=25 -> A retrocede 5 ----------
+ * Tras MOVER:ADELANTE / MOVER:ATRAS, si los pulsos quedaron desiguales (|A-B|
+ * >= ENCODER_BALANCE_MIN_DIFF), la rueda que dio mas vueltas retrocede el
+ * delta exacto en sentido contrario al que llevaba durante el MOVER, hasta
+ * dejar A==B. Si pasa el timeout sin alcanzar la meta, se corta y se envia
+ * LISTO igual (no bloquea al cliente). Para giros (IZQUIERDA/DERECHA) la
+ * diferencia es parte de la geometria, asi que NO se aplica balance ahi.
+ * Desactivar global: ENCODER_POST_MOVE_BALANCE 0. Runtime: comando TCP
+ * BALANCE:0 / BALANCE:1.
+ */
+#ifndef ENCODER_POST_MOVE_BALANCE
+#define ENCODER_POST_MOVE_BALANCE 1
+#endif
+/** Umbral en pulsos para arrancar el balance (ignora ruido de 1-2 cuentas). */
+#ifndef ENCODER_BALANCE_MIN_DIFF
+#define ENCODER_BALANCE_MIN_DIFF 2
+#endif
+/** PWM con que retrocede la rueda que sobro pulsos (0-255). */
+#ifndef ENCODER_BALANCE_PWM
+#define ENCODER_BALANCE_PWM 130
+#endif
+/** Tope duro de tiempo de la fase de balance (ms): si la rueda no logra dar
+ * los pulsos, no se queda colgado el LISTO al cliente. */
+#ifndef ENCODER_BALANCE_TIMEOUT_MS
+#define ENCODER_BALANCE_TIMEOUT_MS 1500
+#endif
 #endif
 
 // ========== SERVO 180° (orientación del ultrasonido) ==========
@@ -382,6 +409,23 @@ static int g_encLastPwmB = 0;
 static unsigned long g_encLastLogMs = 0;
 static unsigned long g_encLastCtrlMs = 0;
 static uint8_t g_encStraightState = 0; /* 0=ok 1=ajuste 2=recuperacion 3=trabado suelo */
+/* ----- Balance post-MOVER / post-MOVEW ----- */
+static bool g_balanceActive = false;
+static bool g_balanceWheelIsA = false;   /* true: A retrocede; false: B retrocede */
+static uint8_t g_balanceMoverKind = 0;   /* 1 ADELANTE, 2 ATRAS (no se usa en giros) */
+static uint32_t g_balanceStartA = 0;
+static uint32_t g_balanceStartB = 0;
+static uint32_t g_balanceTargetDelta = 0;
+static unsigned long g_balanceEndMs = 0;
+/* Estado de la ultima orden MOVEW recordada para arrancar el balance al terminar. */
+static uint8_t g_movewKind = 0;          /* 1 ADELANTE, 2 ATRAS, 3 IZQ, 4 DER */
+static uint32_t g_movewTargetA = 0;
+static uint32_t g_movewTargetB = 0;
+#if ENCODER_POST_MOVE_BALANCE
+static bool g_balanceEnabled = true;     /* runtime toggle (BALANCE:0 / BALANCE:1) */
+#else
+static bool g_balanceEnabled = false;
+#endif
 #endif
 String currentCommand = "";
 unsigned long lastWifiReconnectAttempt = 0;
@@ -390,6 +434,9 @@ bool tcpServerStarted = false;
 #if MOTOR_ACTIVITY_LED_PIN >= 0
 static inline void updateMotorActivityLed() {
   bool on = moving || movingA || movingB;
+#if USE_WHEEL_ENCODERS
+  on = on || g_balanceActive;
+#endif
   digitalWrite(MOTOR_ACTIVITY_LED_PIN, on ? HIGH : LOW);
 }
 #else
@@ -794,6 +841,7 @@ static void encoderResetCounts() {
   g_encLastAdjustMs = 0;
   g_encLastCtrlMs = 0;
   g_encLastLogMs = millis();
+  g_balanceActive = false;
 }
 
 /** Estima pulsos/s de cada llanta (ventana ENCODER_VEL_WINDOW_MS). */
@@ -1058,6 +1106,139 @@ static void encoderLogFinalCounts() {
   Serial.print(F("/"));
   Serial.println(g_encLastPwmB);
 }
+
+/**
+ * Tras un MOVER:ADELANTE / MOVER:ATRAS (expectedDiff = 0) o un
+ * MOVEW:ADELANTE/ATRAS:A:B (expectedDiff = targetA - targetB), si los
+ * pulsos quedaron desiguales respecto a la diferencia esperada, arranca a
+ * girar SOLO la rueda que sobro pulsos, en sentido contrario al que
+ * llevaba durante el movimiento, hasta dar (|err|) pulsos extra (que se
+ * cuentan como nuevos en el mismo encoder; el contador solo crece -no se
+ * "resta"-, asi que comparamos contra el snapshot del momento de arrancar
+ * el balance).
+ *
+ * err = (ca - cb) - expectedDiff
+ *   err > 0  -> A sobrepaso lo previsto -> A retrocede
+ *   err < 0  -> B sobrepaso lo previsto -> B retrocede
+ *
+ * Devuelve true si arranco la fase de balance (el caller debe NO mandar
+ * LISTO todavia).
+ */
+static bool encoderBalanceMaybeStart(uint8_t moverKind, int32_t expectedDiff) {
+  if (!g_balanceEnabled) {
+    return false;
+  }
+  if (moverKind != 1 && moverKind != 2) {
+    /* En giros A/B giran en sentido opuesto: la diferencia es geometria, no error. */
+    return false;
+  }
+  uint32_t ca;
+  uint32_t cb;
+  encoderGetLogical(ca, cb);
+  const int32_t actualDiff = (int32_t)ca - (int32_t)cb;
+  const int32_t err = actualDiff - expectedDiff;
+  const uint32_t aerr = (uint32_t)labs((long)err);
+  if (aerr < (uint32_t)ENCODER_BALANCE_MIN_DIFF) {
+    return false;
+  }
+  g_balanceWheelIsA = (err > 0);
+  g_balanceMoverKind = moverKind;
+  g_balanceStartA = ca;
+  g_balanceStartB = cb;
+  g_balanceTargetDelta = aerr;
+  g_balanceEndMs = millis() + (unsigned long)ENCODER_BALANCE_TIMEOUT_MS;
+  g_balanceActive = true;
+
+  /* Sentido a aplicar: contrario al del MOVE que acaba de terminar. */
+  const bool reverseFwd = (moverKind == 2); /* ATRAS -> retrocede = adelante */
+  const int pwm = constrain((int)ENCODER_BALANCE_PWM, (int)ENCODER_PWM_MIN, 255);
+  if (g_balanceWheelIsA) {
+    motorApplyA(reverseFwd);
+    analogWrite(ENA, pwm);
+    analogWrite(ENB, 0);
+  } else {
+    motorApplyB(reverseFwd);
+    analogWrite(ENB, pwm);
+    analogWrite(ENA, 0);
+  }
+  if (client.connected()) {
+    client.print(F("BAL:iniciar:rueda="));
+    client.print(g_balanceWheelIsA ? 'A' : 'B');
+    client.print(F(":actualDiff="));
+    client.print(actualDiff);
+    client.print(F(":expectedDiff="));
+    client.print(expectedDiff);
+    client.print(F(":err="));
+    client.print(err);
+    client.print(F(":target="));
+    client.print(g_balanceTargetDelta);
+    client.print(F(":pwm="));
+    client.println(pwm);
+  }
+#if SERIAL_LOG_MOV
+  Serial.print(F("[BAL] iniciar actualDiff="));
+  Serial.print(actualDiff);
+  Serial.print(F(" expDiff="));
+  Serial.print(expectedDiff);
+  Serial.print(F(" err="));
+  Serial.print(err);
+  Serial.print(F(" rueda="));
+  Serial.print(g_balanceWheelIsA ? 'A' : 'B');
+  Serial.print(F(" target="));
+  Serial.print(g_balanceTargetDelta);
+  Serial.print(F(" PWM="));
+  Serial.println(pwm);
+#endif
+  return true;
+}
+
+/**
+ * true cuando se completo el delta o expiro el timeout (en ambos casos
+ * los motores quedan apagados y g_balanceActive en false).
+ */
+static bool encoderBalanceTick() {
+  if (!g_balanceActive) {
+    return true;
+  }
+  uint32_t ca;
+  uint32_t cb;
+  encoderGetLogical(ca, cb);
+  const uint32_t deltaA = ca - g_balanceStartA;
+  const uint32_t deltaB = cb - g_balanceStartB;
+  const uint32_t delta = g_balanceWheelIsA ? deltaA : deltaB;
+  const bool reached = (delta >= g_balanceTargetDelta);
+  const bool timeout = (millis() >= g_balanceEndMs);
+  if (reached || timeout) {
+    stopMotors();
+    g_balanceActive = false;
+    if (client.connected()) {
+      client.print(F("BAL:fin:"));
+      client.print(reached ? F("OK") : F("TIMEOUT"));
+      client.print(F(":rueda="));
+      client.print(g_balanceWheelIsA ? 'A' : 'B');
+      client.print(F(":delta="));
+      client.print(delta);
+      client.print(F("/"));
+      client.print(g_balanceTargetDelta);
+      client.print(F(":A="));
+      client.print(ca);
+      client.print(F(":B="));
+      client.println(cb);
+    }
+#if SERIAL_LOG_MOV
+    Serial.print(reached ? F("[BAL] OK fin A=") : F("[BAL] TIMEOUT A="));
+    Serial.print(ca);
+    Serial.print(F(" B="));
+    Serial.print(cb);
+    Serial.print(F(" delta="));
+    Serial.print(delta);
+    Serial.print(F("/"));
+    Serial.println(g_balanceTargetDelta);
+#endif
+    return true;
+  }
+  return false;
+}
 #else
 static void initWheelEncoders() {}
 #endif
@@ -1117,6 +1298,19 @@ void setup() {
 #else
   Serial.println(F(" (solo lectura ENC: tras MOVER/LEER; movimiento por ms)"));
 #endif
+  Serial.print(F("Balance post-MOVER (recto): "));
+#if ENCODER_POST_MOVE_BALANCE
+  Serial.print(F("ON"));
+#else
+  Serial.print(F("off"));
+#endif
+  Serial.print(F(" min_diff="));
+  Serial.print((int)ENCODER_BALANCE_MIN_DIFF);
+  Serial.print(F(" pwm="));
+  Serial.print((int)ENCODER_BALANCE_PWM);
+  Serial.print(F(" timeout="));
+  Serial.print((int)ENCODER_BALANCE_TIMEOUT_MS);
+  Serial.println(F(" ms — comandos: BALANCE:0/1/STATUS"));
 #endif
   Serial.println(F("Buzzer ROJO en GPIO33 (solo suena con CELDA:ROJO)."));
 #if MOTOR_ACTIVITY_LED_PIN >= 0
@@ -1345,6 +1539,14 @@ void loop() {
 #endif
 #endif
       bool sendListoAhora = true;
+#if USE_WHEEL_ENCODERS
+      /* Balance: si el MOVER recto dejo |A-B| >= umbral, retroceder en la
+       * rueda que sobro hasta igualar pulsos antes de mandar LISTO. Solo
+       * para ADELANTE/ATRAS (kind 1/2); en giros la diferencia es geometria. */
+      if (encoderBalanceMaybeStart(endedMover, 0)) {
+        sendListoAhora = false;
+      }
+#endif
       unsigned long settleMs = (unsigned long)POST_TURN_SETTLE_MS;
       if (settleMs > 2000UL) {
         settleMs = 2000UL;
@@ -1421,6 +1623,31 @@ void loop() {
     return;
   }
 
+#if USE_WHEEL_ENCODERS
+  if (g_balanceActive) {
+    servicePingWhileBusy();
+    if (encoderBalanceTick()) {
+      if (client.connected()) {
+#if SERIAL_LOG_MOV
+        Serial.println(F("[MOV] Fin balance — enviando LISTO + sensores"));
+#endif
+        emitEncToClient();
+        sendSensorReadings();
+        client.println("LISTO");
+        client.flush();
+        mirrorLastReadToSerialAfterTcp();
+      }
+#if SERIAL_LOG_MOV
+      else {
+        Serial.println(F("[MOV] Cliente TCP desconectado; LISTO no enviado tras balance"));
+      }
+#endif
+    }
+    delay(10);
+    return;
+  }
+#endif
+
   if (movingA || movingB) {
     servicePingWhileBusy();
 #if USE_WHEEL_ENCODERS
@@ -1453,6 +1680,9 @@ void loop() {
           movingA = false;
           movingB = false;
           g_motorWheelPairActive = false;
+          g_movewKind = 0;
+          g_movewTargetA = 0;
+          g_movewTargetB = 0;
 #if SERIAL_LOG_MOV
           Serial.println(F("[MOV] ERR pair encoder sin pulsos"));
 #endif
@@ -1548,16 +1778,34 @@ void loop() {
 #if SERIAL_LOG_MOV
       Serial.println(F("[MOV] Fin pulso (MOTOR)"));
 #endif
-      if (client.connected()) {
-        emitEncToClient();
-        sendSensorReadings();
-        client.println("LISTO");
-        client.flush();
-        mirrorLastReadToSerialAfterTcp();
+#if USE_WHEEL_ENCODERS
+      /* Balance post-MOVEW (recto): A=20 -> objetivo 10 sobrepaso 10 -> retrocede 10. */
+      bool sendListoMotor = true;
+      if (g_movewKind == 1 || g_movewKind == 2) {
+        const int32_t expectedDiff =
+            (int32_t)g_movewTargetA - (int32_t)g_movewTargetB;
+        if (encoderBalanceMaybeStart(g_movewKind, expectedDiff)) {
+          sendListoMotor = false;
+        }
       }
+      g_movewKind = 0;
+      g_movewTargetA = 0;
+      g_movewTargetB = 0;
+      if (sendListoMotor) {
+#endif
+        if (client.connected()) {
+          emitEncToClient();
+          sendSensorReadings();
+          client.println("LISTO");
+          client.flush();
+          mirrorLastReadToSerialAfterTcp();
+        }
 #if SERIAL_LOG_MOV
-      else {
-        Serial.println(F("[MOV] Cliente TCP desconectado; LISTO no enviado"));
+        else {
+          Serial.println(F("[MOV] Cliente TCP desconectado; LISTO no enviado"));
+        }
+#endif
+#if USE_WHEEL_ENCODERS
       }
 #endif
     }
@@ -2024,6 +2272,9 @@ void processCommand(String cmd) {
     encoderResetCounts();
     g_motorWheelStartA = encoderReadForMotorA();
     g_motorWheelStartB = encoderReadForMotorB();
+    g_movewKind = wheelPairKind;
+    g_movewTargetA = wheelPairA;
+    g_movewTargetB = wheelPairB;
 #endif
     g_motorWheelPairActive = true;
     g_motorWheelEncMag = 0;
@@ -2186,6 +2437,12 @@ void processCommand(String cmd) {
     movingB = false;
     g_motorWheelPairActive = false;
     g_motorWheelEncMag = 0;
+#if USE_WHEEL_ENCODERS
+    g_balanceActive = false;
+    g_movewKind = 0;
+    g_movewTargetA = 0;
+    g_movewTargetB = 0;
+#endif
     client.println("LISTO");
   } else if (cmd == "PING") {
     client.println("PONG");
@@ -2205,6 +2462,42 @@ void processCommand(String cmd) {
 #endif
     client.println("LISTO");
     client.flush();
+  } else if (cmd == "BALANCE:0" || cmd == "BALANCE:OFF") {
+#if USE_WHEEL_ENCODERS
+    g_balanceEnabled = false;
+    if (g_balanceActive) {
+      stopMotors();
+      g_balanceActive = false;
+    }
+    client.println(F("OK:BALANCE off"));
+#else
+    client.println(F("ERR:NO_ENCODERS"));
+#endif
+    client.println(F("LISTO"));
+  } else if (cmd == "BALANCE:1" || cmd == "BALANCE:ON") {
+#if USE_WHEEL_ENCODERS
+    g_balanceEnabled = true;
+    client.println(F("OK:BALANCE on"));
+#else
+    client.println(F("ERR:NO_ENCODERS"));
+#endif
+    client.println(F("LISTO"));
+  } else if (cmd == "BALANCE" || cmd == "BALANCE:STATUS") {
+#if USE_WHEEL_ENCODERS
+    client.print(F("BALANCE:enabled="));
+    client.print(g_balanceEnabled ? 1 : 0);
+    client.print(F(":active="));
+    client.print(g_balanceActive ? 1 : 0);
+    client.print(F(":mindiff="));
+    client.print((int)ENCODER_BALANCE_MIN_DIFF);
+    client.print(F(":pwm="));
+    client.print((int)ENCODER_BALANCE_PWM);
+    client.print(F(":timeout_ms="));
+    client.println((int)ENCODER_BALANCE_TIMEOUT_MS);
+#else
+    client.println(F("BALANCE:DISABLED"));
+#endif
+    client.println(F("LISTO"));
   } else if (cmd == "STATUS") {
     client.println("IP:" + WiFi.localIP().toString());
     client.println("RSSI:" + String(WiFi.RSSI()));

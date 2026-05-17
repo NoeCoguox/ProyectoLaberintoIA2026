@@ -1489,6 +1489,11 @@
         } else if (j.move_mode === "encoder") {
           banner += " · encoder E" + (j.pulses || "?");
         }
+        if (typeof RobotMoveCal !== "undefined" && j.raw_lines) {
+          const bal = RobotMoveCal.parseBalanceFromRawLines(j.raw_lines);
+          const bs = RobotMoveCal.formatBalanceStatus(bal);
+          if (bs) banner += " · " + bs;
+        }
         msgEl.textContent = banner;
         msgEl.className = "msg ok";
       }
