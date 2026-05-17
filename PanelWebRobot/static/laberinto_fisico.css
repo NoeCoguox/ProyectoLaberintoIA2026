@@ -1679,15 +1679,25 @@
 /* ── Simulador (terreno TCS ficticio) ── */
 .lf-sim-chip {
   margin-inline-start: 0.65rem;
-  padding: 0.2rem 0.65rem;
+  padding: 0.25rem 0.85rem;
   border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  background: rgba(45, 112, 164, 0.35);
-  border: 1px solid rgba(120, 200, 255, 0.35);
-  color: rgba(220, 240, 255, 0.95);
+  background: rgba(220, 140, 30, 0.35);
+  border: 1.5px solid rgba(255, 190, 90, 0.85);
+  color: rgba(255, 240, 200, 1);
+  box-shadow: 0 0 0 2px rgba(255, 170, 60, 0.18), 0 6px 18px -8px rgba(255, 170, 60, 0.6);
+  animation: lfSimChipPulse 1.6s ease-in-out infinite;
+}
+.lf-sim-chip::before {
+  content: "⚠ ";
+  font-weight: 900;
+}
+@keyframes lfSimChipPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(255, 170, 60, 0.18), 0 6px 18px -8px rgba(255, 170, 60, 0.6); }
+  50%      { box-shadow: 0 0 0 4px rgba(255, 170, 60, 0.36), 0 8px 22px -6px rgba(255, 170, 60, 0.8); }
 }
 
 .lf-sim-hero__head {

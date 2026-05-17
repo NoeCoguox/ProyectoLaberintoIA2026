@@ -45,6 +45,17 @@
   let inFlightTcp = false;
   /** Si el último adelante/atras entró en suelo ROJO se revirtió con el pulso contrario — replan síncronos 4/5. */
   let lfLastDisplacementBlockedByRed = false;
+  /** Confirmacion 2-de-2 contra falsos positivos del TCS34725 (IR-leak en R que mete azules como rojo).
+   *  Compartido entre modos 1/2/3/4/5/6 para que cualquier rama del agente
+   *  use la misma logica antifalsos: una sola lectura ROJA marca "pendiente",
+   *  la segunda confirma. */
+  let lfLastCellWasRedConfirm = false;
+  /** Contador de giros consecutivos sin avanzar (anti-loop en reactivos: si gira 4 veces
+   *  seguidas sin un adelante/atras, fuerza un atras para escapar de esquinas). */
+  let lfRecentTurnCount = 0;
+  /** Memoria de la última dirección elegida por la rama reactiva (modo 2): se usa para
+   *  alternar giros izq/der en lugar de siempre el mismo lado. */
+  let lfLastReactiveTurn = null;
   const LF_SIM_STORAGE_KEY = "laberintoFisicoSimTerrain_v1";
   /** Terreno «verdad» para TCS en simulación (mismo vocabulario que el firmware). */
   /** @type {("VERDE"|"AZUL"|"ROJO")[][]} */
@@ -1551,17 +1562,119 @@
     return true;
   }
 
+  /**
+   * Cualquier MOVER de cualquier modo pasa por aquí: mantiene el contador de giros y
+   * resetea ante un avance/retroceso. Se usa después del `await execMover(m)`.
+   */
+  function postMoveBookkeeping(dir) {
+    if (dir === "izquierda" || dir === "derecha") {
+      lfRecentTurnCount += 1;
+      lfLastReactiveTurn = dir;
+    } else if (dir === "adelante" || dir === "atras") {
+      lfRecentTurnCount = 0;
+    }
+  }
+
+  /**
+   * Detecta el color de la celda actual y devuelve una decision compartida por todos los modos:
+   *   { kind: "VERDE" }                -> meta alcanzada (parar con exito)
+   *   { kind: "ROJO_PEND" }            -> 1ra lectura roja, agendar otro ciclo (2-de-2)
+   *   { kind: "ROJO_CONFIRMADO" }      -> roja confirmada, hay que retroceder y seguir
+   *   { kind: "OK" }                   -> color seguro; resetea cualquier "pendiente"
+   * No realiza side effects en la pose ni en la cola.
+   */
+  function classifyCurrentCellForAgent(lj) {
+    const celdaUp = (lj && lj.celda != null ? String(lj.celda) : "")
+      .toUpperCase()
+      .trim();
+    if (celdaUp === "VERDE") {
+      lfLastCellWasRedConfirm = false;
+      return { kind: "VERDE" };
+    }
+    if (celdaUp === "ROJO") {
+      if (!lfLastCellWasRedConfirm) {
+        lfLastCellWasRedConfirm = true;
+        return { kind: "ROJO_PEND" };
+      }
+      lfLastCellWasRedConfirm = false;
+      return { kind: "ROJO_CONFIRMADO" };
+    }
+    lfLastCellWasRedConfirm = false;
+    return { kind: "OK" };
+  }
+
+  /**
+   * Maneja un ROJO confirmado en CUALQUIER modo: retrocede 1 paso y marca la celda anterior
+   * (en la que estaba el robot antes del retroceso) como OBSTACULO en el mapa para que el
+   * planner / explorador no la elijan otra vez. Devuelve true si pudo retroceder.
+   */
+  async function handleConfirmedRedRetreat(modeName) {
+    const host = hostEl.value.trim();
+    const port = parseInt(portEl.value, 10) || 8888;
+    if (!host) return false;
+    msgEl.textContent = modeName + ": ROJO confirmado pisando suelo — retrocedo 1 paso y sigo.";
+    msgEl.className = "msg";
+    /* Snapshot de la celda actual ANTES de retroceder: esa es la que esta en rojo. */
+    readRobotFromInputs();
+    const stuckX = robot.x;
+    const stuckY = robot.y;
+    const ok = await lfTcpMoveNoGuard(host, port, "atras");
+    await leer(true);
+    if (inBounds(stuckX, stuckY)) {
+      grid[stuckY][stuckX] = mergeMapState(grid[stuckY][stuckX], "OBSTACULO");
+      renderMap();
+    }
+    return ok;
+  }
+
+  /**
+   * Marcar como obstaculo la celda al frente (cuando execMover detecto rojo durante el
+   * desplazamiento ya rebotó). Util para que el planner mode 4/5 evite el camino al replanear.
+   */
+  function markFrontAsObstacleAfterRollback() {
+    readRobotFromInputs();
+    const fc = frontXY();
+    if (inBounds(fc.x, fc.y)) {
+      grid[fc.y][fc.x] = mergeMapState(grid[fc.y][fc.x], "OBSTACULO");
+      renderMap();
+    }
+  }
+
+  /**
+   * Reactivo (modo 2). Reglas locales con anti-loop:
+   *  - Si ultrasonido detecta obstaculo cerca al frente: alterna izquierda/derecha en lugar
+   *    de pegarse siempre al mismo lado.
+   *  - Si la celda al frente esta marcada OBSTACULO en el mapa: alterna giros.
+   *  - Si la celda al frente sale del mapa: alterna giros.
+   *  - Si lleva varios giros seguidos (>=4) sin avanzar: fuerza un atras para escapar de
+   *    esquinas/cul-de-sac.
+   *  - Si el ROJO de TCS hace que pre-LEER ya hubiera escapado, el modo retoma normal.
+   */
   function reactivePickMove() {
     readRobotFromInputs();
     const dcm = lastDistCm;
     const u = clampInt(+ultraThreshEl.value, 1, 80) || 15;
-    if (dcm != null && dcm < 999 && dcm < u) return "izquierda";
-    const raw = (lastRawCelda || "").toUpperCase();
-    if (raw === "ROJO") return "STOP";
     const fc = frontXY();
-    if (inBounds(fc.x, fc.y) && grid[fc.y][fc.x] === "OBSTACULO") return "derecha";
-    const want = Math.random() < 0.5 ? "izquierda" : "derecha";
-    if (!walkableCell(fc.x, fc.y) && fc.x !== undefined) return want;
+    const obstacleAhead =
+      (dcm != null && dcm < 999 && dcm < u) ||
+      (inBounds(fc.x, fc.y) && grid[fc.y][fc.x] === "OBSTACULO") ||
+      !inBounds(fc.x, fc.y);
+
+    if (obstacleAhead) {
+      if (lfRecentTurnCount >= 4) {
+        lfRecentTurnCount = 0;
+        return "atras";
+      }
+      const turn = lfLastReactiveTurn === "izquierda" ? "derecha" : "izquierda";
+      return turn;
+    }
+    if (!walkableCell(fc.x, fc.y)) {
+      if (lfRecentTurnCount >= 4) {
+        lfRecentTurnCount = 0;
+        return "atras";
+      }
+      return lfLastReactiveTurn === "izquierda" ? "derecha" : "izquierda";
+    }
     return "adelante";
   }
 
@@ -1577,19 +1690,30 @@
     return moves[0];
   }
 
+  /**
+   * QL demo (modo 6) con avoidance basico:
+   *  - No elige adelante si saldria del grid.
+   *  - No elige adelante si ultrasonido dice obstaculo cerca.
+   *  - No elige adelante si la celda esta marcada OBSTACULO.
+   *  - Anti-loop: si lleva varios giros consecutivos, prefiere atras.
+   */
   function qlDemoMove() {
-    const opts = [];
     readRobotFromInputs();
     const fc = frontXY();
-    if (
-      lastDistCm != null &&
-      lastDistCm < 999 &&
-      lastDistCm < (clampInt(+ultraThreshEl.value, 1, 80) || 15)
-    ) {
+    const u = clampInt(+ultraThreshEl.value, 1, 80) || 15;
+    const ultraClose = lastDistCm != null && lastDistCm < 999 && lastDistCm < u;
+    const frontOk =
+      inBounds(fc.x, fc.y) &&
+      grid[fc.y][fc.x] !== "OBSTACULO" &&
+      walkableCell(fc.x, fc.y);
+
+    const opts = [];
+    if (!ultraClose && frontOk) {
+      opts.push("adelante", "adelante", "izquierda", "derecha");
+    } else {
       opts.push("izquierda", "derecha");
-    } else if (inBounds(fc.x, fc.y) && grid[fc.y][fc.x] !== "OBSTACULO" && walkableCell(fc.x, fc.y))
-      opts.push("adelante");
-    else opts.push("izquierda", "derecha", "atras");
+      if (lfRecentTurnCount >= 3) opts.push("atras", "atras");
+    }
     return opts[Math.floor(Math.random() * opts.length)];
   }
 
@@ -1627,28 +1751,121 @@
     }
 
     if (mode === "1") {
+      /* Mode 1 = cola TCP fija. Reglas:
+       * - VERDE → meta alcanzada → para con éxito.
+       * - ROJO en pre-LEER → confirmación 2-de-2; al confirmar retrocede un paso, descarta
+       *   el próximo `adelante`/`atras` (volvería a chocar) y sigue.
+       * - Cualquier otro color → siguiente comando de la cola. */
+      const cls = classifyCurrentCellForAgent(lj);
+      if (cls.kind === "VERDE") {
+        msgEl.textContent =
+          "Cola programada: META (verde) detectada por el TCS34725 — autonomía detenida con éxito.";
+        msgEl.className = "msg ok";
+        return { stopAutorun: true };
+      }
+      if (cls.kind === "ROJO_PEND") {
+        msgEl.textContent =
+          "Cola programada: posible ROJO en TCS34725 — re-leo para confirmar (anti-falsos del canal R).";
+        msgEl.className = "msg";
+        return { stopAutorun: false };
+      }
+      if (cls.kind === "ROJO_CONFIRMADO") {
+        await handleConfirmedRedRetreat("Cola programada");
+        if (programQueue.length && (programQueue[0] === "adelante" || programQueue[0] === "atras")) {
+          programQueue.shift();
+        }
+        return { stopAutorun: false };
+      }
+
       const next = programQueue.shift();
       if (!next) {
         msgEl.textContent = "Cola programada terminada.";
         msgEl.className = "msg ok";
         return { stopAutorun: true };
       }
+
+      /* Antes de mandar un MOVER recto, comprobar que no se salga del grid. */
+      if (next === "adelante" || next === "atras") {
+        readRobotFromInputs();
+        const d = forwardDelta[robot.h];
+        const dx = next === "adelante" ? d.dx : -d.dx;
+        const dy = next === "adelante" ? d.dy : -d.dy;
+        const nx = robot.x + dx;
+        const ny = robot.y + dy;
+        if (!inBounds(nx, ny)) {
+          msgEl.textContent =
+            "Cola programada: el siguiente paso (" +
+            next +
+            ") sale del mapa (" +
+            nx +
+            "," +
+            ny +
+            "). Salto este paso y sigo con la cola.";
+          msgEl.className = "msg";
+          return { stopAutorun: false };
+        }
+      }
+
       if (next === "detener") {
         await execMover("detener");
         return { stopAutorun: false };
       }
       const ok = await execMover(next);
+      /* execMover detectó ROJO en el desplazamiento → ya hizo rollback solo. Descarto
+       * el próximo adelante/atrás (volvería a chocar) y sigo con el resto de la cola. */
+      if (ok && lfLastDisplacementBlockedByRed) {
+        if (programQueue.length && (programQueue[0] === "adelante" || programQueue[0] === "atras")) {
+          const skipped = programQueue.shift();
+          msgEl.textContent =
+            "Cola programada: ROJO al frente → descarto el siguiente «" +
+            skipped +
+            "» y sigo con la cola.";
+          msgEl.className = "msg";
+        }
+      }
+      /* Si la cola se vació, paramos en la próxima iteración (cuando next === undefined). */
       return { stopAutorun: !ok };
+    }
+
+    /* —— Modos reactivos / de búsqueda (2,3,4,5,6) ——
+     * Todos comparten:
+     *  - VERDE → meta alcanzada → para con éxito.
+     *  - ROJO → confirmación 2-de-2 → retroceso + reanuda (no se traba).
+     *  - Out-of-bounds en `adelante`/`atras` → se sustituye por giro alternado.
+     *  - Anti-loop: contar giros consecutivos para escaparse de esquinas con un atras.
+     */
+    if (mode === "2" || mode === "3" || mode === "4" || mode === "5" || mode === "6") {
+      const cls = classifyCurrentCellForAgent(lj);
+      if (cls.kind === "VERDE") {
+        msgEl.textContent = "META (verde) detectada por el TCS34725 — autonomía detenida con éxito.";
+        msgEl.className = "msg ok";
+        return { stopAutorun: true };
+      }
+      if (cls.kind === "ROJO_PEND") {
+        msgEl.textContent = "Posible ROJO en TCS34725 — re-leo para confirmar (anti-falsos).";
+        msgEl.className = "msg";
+        return { stopAutorun: false };
+      }
+      if (cls.kind === "ROJO_CONFIRMADO") {
+        await handleConfirmedRedRetreat("Modo " + mode);
+        if (mode === "4" || mode === "5") {
+          doPlan(true);
+        } else if (mode === "3") {
+          tcpQueue = [];
+        }
+        lfRecentTurnCount = 0;
+        return { stopAutorun: false };
+      }
     }
 
     if (mode === "2") {
       const m = reactivePickMove();
-      if (m === "STOP") {
-        msgEl.textContent = "Reactivo: condición de parada (meta u obstáculo actual).";
-        msgEl.className = "msg ok";
-        return { stopAutorun: true };
-      }
       const ok = await execMover(m);
+      if (ok && lfLastDisplacementBlockedByRed) {
+        markFrontAsObstacleAfterRollback();
+        lfRecentTurnCount = 0;
+      }
+      postMoveBookkeeping(m);
       return { stopAutorun: !ok };
     }
 
@@ -1660,7 +1877,26 @@
         msgEl.className = "msg err";
         return { stopAutorun: true };
       }
+      /* Si la primera jugada del path es adelante/atras y se sale del grid, descartamos la
+       * cola y el próximo ciclo replanea desde la pose actualizada (no nos colgamos). */
+      if ((m === "adelante" || m === "atras") && (() => {
+        readRobotFromInputs();
+        const d = forwardDelta[robot.h];
+        const dx = m === "adelante" ? d.dx : -d.dx;
+        const dy = m === "adelante" ? d.dy : -d.dy;
+        return !inBounds(robot.x + dx, robot.y + dy);
+      })()) {
+        tcpQueue = [];
+        msgEl.textContent = "Explorador: el próximo paso saldría del grid → replaneo en el siguiente ciclo.";
+        msgEl.className = "msg";
+        return { stopAutorun: false };
+      }
       const ok = await execMover(m);
+      if (ok && lfLastDisplacementBlockedByRed) {
+        markFrontAsObstacleAfterRollback();
+        tcpQueue = [];
+      }
+      postMoveBookkeeping(m);
       return { stopAutorun: !ok };
     }
 
@@ -1668,18 +1904,59 @@
       doPlan(true);
       const next = tcpQueue.shift();
       if (!next) {
+        /* Sin plan: si el robot ya está en la meta de coordenadas, terminó.
+         * Si no, devolver hint pero NO parar automáticamente — algunos casos se
+         * resuelven cuando el operador marca celdas en el mapa. */
+        if (robot.x === gx && robot.y === gy) {
+          msgEl.textContent = "Planificador: ya estás en la meta (coordenadas).";
+          msgEl.className = "msg ok";
+          return { stopAutorun: true };
+        }
         msgEl.textContent = plannerFailureHint(robot.x, robot.y, gx, gy);
         msgEl.className = "msg err";
         return { stopAutorun: true };
       }
+      /* Out-of-bounds preventivo (solo deberia pasar si el plan vino mal calculado). */
+      if (next === "adelante" || next === "atras") {
+        readRobotFromInputs();
+        const d = forwardDelta[robot.h];
+        const dx = next === "adelante" ? d.dx : -d.dx;
+        const dy = next === "adelante" ? d.dy : -d.dy;
+        if (!inBounds(robot.x + dx, robot.y + dy)) {
+          tcpQueue = [];
+          msgEl.textContent = "Planificador: el próximo paso saldría del grid → replaneo.";
+          msgEl.className = "msg";
+          return { stopAutorun: false };
+        }
+      }
       const ok = await execMover(next);
-      if (lfLastDisplacementBlockedByRed) doPlan(true);
+      if (ok && lfLastDisplacementBlockedByRed) {
+        markFrontAsObstacleAfterRollback();
+        doPlan(true);
+      }
+      postMoveBookkeeping(next);
       return { stopAutorun: !ok };
     }
 
     if (mode === "6") {
-      const m = qlDemoMove();
+      let m = qlDemoMove();
+      /* Out-of-bounds preventivo: si toca adelante/atras pero la celda destino sale del
+       * grid, se sustituye por giro alternado. */
+      if (m === "adelante" || m === "atras") {
+        readRobotFromInputs();
+        const d = forwardDelta[robot.h];
+        const dx = m === "adelante" ? d.dx : -d.dx;
+        const dy = m === "adelante" ? d.dy : -d.dy;
+        if (!inBounds(robot.x + dx, robot.y + dy)) {
+          m = lfLastReactiveTurn === "izquierda" ? "derecha" : "izquierda";
+        }
+      }
       const ok = await execMover(m);
+      if (ok && lfLastDisplacementBlockedByRed) {
+        markFrontAsObstacleAfterRollback();
+        lfRecentTurnCount = 0;
+      }
+      postMoveBookkeeping(m);
       return { stopAutorun: !ok };
     }
 
@@ -1812,6 +2089,15 @@
       lfAuto.checked = true;
       syncLfAuto();
     }
+    lfLastCellWasRedConfirm = false;
+    lfRecentTurnCount = 0;
+    lfLastReactiveTurn = null;
+    /* Refrescar "Percepción en vivo": tras parar la autonomía, el panel queda con el último
+     * color leído (que puede ser un falso ROJO de la lectura final); pedir un LEER nuevo
+     * para mostrar el color actual real. */
+    if (hostEl && hostEl.value && hostEl.value.trim()) {
+      void leer(true).catch(() => {});
+    }
     updateAutorunUi();
     lfSchedulePingRestart();
   }
@@ -1835,12 +2121,19 @@
         if (autorunStatusEl) autorunStatusEl.textContent = "Autonomía finalizada.";
         updateAutorunUi();
         setAgentState("Listo");
+        lfLastCellWasRedConfirm = false;
+        if (hostEl && hostEl.value && hostEl.value.trim()) {
+          void leer(true).catch(() => {});
+        }
         return;
       }
       if (!autorunActive) return;
       if (autorunStatusEl) {
+        const simOn = lfSimulationEnabled();
         autorunStatusEl.textContent =
-          "Autonomía activa · modo " + agentModeEl.value + " · próximo ciclo en " + (parseInt(autorunDelayEl.value, 10) || 800) + " ms";
+          (simOn ? "⚠ SIMULADOR · " : "") +
+          "Autonomía activa · modo " + agentModeEl.value + " · próximo ciclo en " + (parseInt(autorunDelayEl.value, 10) || 800) + " ms" +
+          (simOn ? " · ESP32 NO recibe comandos" : "");
       }
       scheduleNextAutorunStep();
     } catch (e) {
@@ -1853,10 +2146,31 @@
   function startAutorun() {
     savePrefs();
     const host = hostEl.value.trim();
-    if (!lfSimulationEnabled() && !host) {
+    const simOn = lfSimulationEnabled();
+    if (!simOn && !host) {
       msgEl.textContent = "Activá simulador o poné la IP del ESP32.";
       msgEl.className = "msg err";
       return;
+    }
+    /* Caso muy común: el usuario tiene IP configurada PERO el simulador quedó encendido
+     * desde una prueba anterior. El panel simula "movimientos" (ves el robot avanzando
+     * en el grid) pero el carro físico no recibe nada por TCP. Avisamos antes de arrancar. */
+    if (simOn && host) {
+      const cont = window.confirm(
+        "Simulador ENCENDIDO con IP configurada (" + host + ").\n\n" +
+        "La autonomía NO va a tocar al ESP32 — todo es virtual. El carrito físico se queda quieto.\n\n" +
+        "¿Querés continuar simulando? (Cancelá para apagar el simulador y usar el ESP32 real.)"
+      );
+      if (!cont) {
+        const el = document.getElementById("lfSimEnabled");
+        if (el && el.checked) {
+          el.checked = false;
+          el.dispatchEvent(new Event("change"));
+        }
+        msgEl.textContent = "Simulador apagado. Volvé a tocar «Iniciar autonomía» para correr contra el ESP32 real.";
+        msgEl.className = "msg ok";
+        return;
+      }
     }
     if (agentModeEl.value === "1") {
       if (!programQueue.length) loadProgramFromTextarea();
@@ -1878,15 +2192,23 @@
     autonomyStartedAtMs = Date.now();
     autonomyEndedAtMs = null;
     autorunActive = true;
+    lfLastCellWasRedConfirm = false;
+    lfLastDisplacementBlockedByRed = false;
+    lfRecentTurnCount = 0;
+    lfLastReactiveTurn = null;
     updateAutorunUi();
     void lfPingOnce();
-    setAgentState("Autonomía");
+    setAgentState(simOn ? "SIM · Autonomía" : "Autonomía");
     const delayMs = autorunDelayEl && autorunDelayEl.value ? autorunDelayEl.value : "?";
     if (autorunStatusEl) {
       autorunStatusEl.textContent =
-        "Autonomía activa · modo " + agentModeEl.selectedOptions[0].text.trim() + " · intervalo " + delayMs + " ms";
+        (simOn ? "⚠ SIMULADOR · " : "") +
+        "Autonomía activa · modo " + agentModeEl.selectedOptions[0].text.trim() + " · intervalo " + delayMs + " ms" +
+        (simOn ? " · el ESP32 NO recibe comandos" : "");
     }
-    msgEl.textContent = "Autonomía iniciada — el robot ejecutará pasos según el modo seleccionado.";
+    msgEl.textContent = simOn
+      ? "Autonomía iniciada en SIMULADOR — los movimientos son virtuales, el carrito físico no se mueve."
+      : "Autonomía iniciada — el robot ejecutará pasos según el modo seleccionado.";
     msgEl.className = "msg ok";
     void runAutorunLoop();
   }

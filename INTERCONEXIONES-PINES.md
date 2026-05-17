@@ -106,6 +106,25 @@ El firmware emite PWM continuo (**`BUZZER_FREQ_HZ`**, por defecto 2,5 kHz) en **
 
 **Nota:** con buzzer **activo** solo hay que llevar alto/bajo desde un GPIO sin esta lógica de tono PWM; este firmware está pensado para **pasivo** (tono definido por frecuencia PWM).
 
+### 4.1 Velocidad del carro (PWM del L298N) — calibrar en caliente sin reflashear
+
+Para celdas chicas (≤ 30 cm × 30 cm) y "menos meneo", **el PWM por defecto bajó de 200 a 150** (`PWM_SPEED_DEFAULT 150`). Esto reduce el torque inicial y el carro ya no patina ni se sacude al arrancar; con la misma `ms` que tenías (`750`), recorre **menos distancia** (más cerca de 30 cm).
+
+**Comando TCP en caliente (no requiere reflashear):**
+
+| Comando | Respuesta | Qué hace |
+|---------|-----------|----------|
+| `SPEED` | `SPEED:150` + `LISTO` | Consulta el PWM actual. |
+| `SPEED:N` (N entre 1 y 255) | `OK:SPEED:N` + `LISTO` | Cambia el PWM de MOVER/MOTOR. Persiste hasta el reinicio. |
+
+Recetas rápidas:
+
+- Carro pesado / suelo con fricción: `SPEED:170` o `SPEED:200`.
+- Celdas muy chicas / tracción muy fuerte: `SPEED:120`.
+- Encoder no cuenta porque no rompe rozamiento: subí `SPEED:N` y/o `ENCODER_BALANCE_PWM`.
+
+El log de boot ahora imprime: `PWM_SPEED inicial: 150 — runtime: SPEED:N (1..255)` y `STATUS` incluye `SPEED:N` para verificarlo desde el simulador.
+
 ---
 
 ## 5. Sensor de color TCS34725 (I2C, mira al suelo)
@@ -119,6 +138,25 @@ El firmware emite PWM continuo (**`BUZZER_FREQ_HZ`**, por defecto 2,5 kHz) en **
 | LED (si existe en la placa) | Según datasheet de la placa; a menudo opcional |
 
 **Dirección I2C:** el firmware prueba **0x29** y **0x39**.
+
+### 5.1 Clasificación de color robusta (anti AZUL→ROJO)
+
+El TCS34725 tiene **leak infrarrojo en el canal R**: bajo luz mixta (sol, ambiente, LED del propio módulo encendido) un suelo **AZUL** puede dar `R` casi igual o un poco mayor que `B`. Las reglas viejas por proporciones (`pr/pg/pb > 0.39`) confunden eso como ROJO. El firmware actual usa una pipeline de tres pasos por orden de prioridad:
+
+1. **Mediana de 3 lecturas** (`tcsMedianRaw`): cada `LEER` toma 3 muestras consecutivas y se queda con la mediana por canal. Mata fogonazos transitorios (vibración, sombra cruzada).
+2. **Clasificación por matiz (Hue)** — la regla principal:
+   - Convierte `R,G,B` a HSV y se queda con el ángulo de matiz (0-360°).
+   - Bandas: **ROJO** `≥340° || ≤25°` · **VERDE** `70°–180°` · **AZUL** `185°–330°` (banda azul ancha a propósito para absorber el desplazamiento por IR-leak hacia magenta).
+   - Sólo aplica si la saturación es ≥ 0.08 (descarta gris/sombra).
+3. **Fallback por proporciones + reglas débiles**: si el matiz cayó en zona neutra o la saturación es baja, vuelve a las reglas viejas (`pr/pg/pb`) — sirve para seguir clasificando con luz pobre.
+
+En el panel `Laberinto físico` la lectura llega como `CELDA:AZUL/ROJO/VERDE/UNKNOWN` igual que antes; **no hace falta cambiar nada en el frontend**. La pestaña `Calibración → Color` muestra la **regla disparada** (`hue-AZUL`, `prop-AZUL`, `weak-AZUL`, `fallback-RAW-B`, etc.) si querés ver qué rama lo clasificó.
+
+**Si todavía ves un AZUL clasificado como ROJO en hardware:**
+
+- Bajá el **LED blanco** del módulo Adafruit (jumper o pin LED a GND): elimina reflexión directa que falsea el R.
+- Acercá el sensor al suelo (5-10 mm) para que C suba arriba de `TCS34725_CLEAR_MIN`.
+- Si tu papel azul es muy oscuro, podés bajar el umbral de saturación recompilando: cambiar `0.08f` a `0.05f` en la regla por matiz.
 
 ---
 
@@ -135,29 +173,48 @@ Usa el pin **DO** (salida digital del comparador). **AO** no hace falta. El firm
 
 **Mecánica:** necesitás un disco con agujeros (o pestañas) que corte la ranura IR del FC-03 cuando la rueda gira; sin eso no hay pulsos y no hay corrección.
 
-### 6.1 Balance post-MOVER / post-MOVEW (recto): retroceso por pulsos
+### 6.1 Balance post-MOVER / post-MOVEW (recto): "el carro se endereza solo"
 
-Funciona tras cualquier orden recta (kind 1 = `ADELANTE`, kind 2 = `ATRAS`):
+Funciona automáticamente, sin intervención humana, tras cualquier orden recta (kind 1 = `ADELANTE`, kind 2 = `ATRAS`). En **giros** (`IZQUIERDA`/`DERECHA`) la diferencia entre A y B es geometría: ahí el balance no se aplica.
 
-- **`MOVER:ADELANTE` / `MOVER:ATRAS`** (cruceta por tiempo o por pulsos `:E…`). La diferencia esperada es **0** (el firmware quiere `A == B`).
-- **`MOVEW:ADELANTE:A…:B…` / `MOVEW:ATRAS:A…:B…`** (cruceta de la web cuando están activados los pulsos por flecha). La diferencia esperada es `targetA − targetB`. Si configurás `↑ A=10 B=10` y por inercia queda `A=15 B=11`, el balance hace que **A retroceda 4 pulsos** (no toca la diferencia que vos quisiste tener entre las ruedas).
+**Regla por defecto (modo automático para laberinto físico):**
 
-Reglas:
+- El firmware **siempre intenta dejar `A == B`** después de cada `MOVER:ADELANTE/ATRAS` o `MOVEW:ADELANTE/ATRAS:A:B`, **incluso si la cruceta de pulsos pidió `A≠B`**.
+- Si querés volver al modo "respetar la asimetría que pediste" (legacy), recompilás con `ENCODER_BALANCE_RESPECT_PAIR_TARGETS 1`.
 
-- Calcula `actualDiff = A − B`, `err = actualDiff − expectedDiff`. Si **`|err| ≥ ENCODER_BALANCE_MIN_DIFF`** (2 por defecto), la rueda que sobrepasó retrocede `|err|` pulsos en sentido contrario al del MOVE original.
-- En **giros (`IZQUIERDA`/`DERECHA`)** la diferencia entre A y B es geometría del giro, no error: el balance **no se aplica** (el firmware sigue con `POST_TURN_SETTLE_MS` si tu config lo usa).
-- Si pasa `ENCODER_BALANCE_TIMEOUT_MS` (1500 ms por defecto) sin alcanzar la meta, se corta y se manda `LISTO` igual; el log USB lo marca `[BAL] TIMEOUT`.
+**SIMÉTRICO vs. PIVOTE (lo importante para que NO haga "vueltas de 270"):**
 
-**Importante con los contadores:** los FC-03 sólo cuentan flancos (no saben dirección), así que **el contador del encoder sólo crece**. Si A=20 B=28 y B retrocede 8, el ENC final será A=20, B=36 (Δ=−16) — físicamente la rueda B sí dio los 8 pulsos atrás. Para confirmar que el balance corrió sin depender de Δ, usá la línea **`BAL:fin:OK:rueda=…:delta=…/…:A=…:B=…`** (el panel ya la muestra como `BAL B retrocedió 8 pulsos`).
+`ENCODER_BALANCE_MODE` decide cómo se aplica la corrección:
+
+- **`1` SIMÉTRICO (default, "carro recto"):** la rueda con sobrante retrocede `|err|/2` pulsos **y al mismo tiempo** la rueda lenta avanza `|err|/2` pulsos. Las rotaciones netas terminan iguales en ambas llantas → **el chasis no rota**, sólo se mueve un toquito en la dirección original.
+- **`0` PIVOTE (legacy):** la rueda con sobrante retrocede sola `|err|`, la otra queda detenida → **el chasis pivota** (es lo que se veía como "media vuelta" cuando se intentaba enderezar).
+
+> Ejemplo. `MOVER:ADELANTE` deja `A=20`, `B=28` (la derecha pasó). En modo simétrico el firmware ordena: A avanza 4 pulsos más; B retrocede 4 pulsos. Estado final: `A=24, B=32` (en contadores) y rotaciones netas `A=24 fwd, B=24 fwd` → **carro recto**, ~0.5 cm más adelante.
+
+**Cómo decide cuánto corregir:**
+
+1. Lee `A`, `B` del encoder al terminar el MOVE.
+2. `actualDiff = A − B`, `err = actualDiff − expectedDiff` (con `expectedDiff = 0` por defecto).
+3. Si `|err| ≥ ENCODER_BALANCE_MIN_DIFF` (2 pulsos): arranca pasada de balance:
+   - **modo SIM**: `targetA = targetB = |err|/2` (la mitad para cada llanta, dirigidas en sentidos opuestos).
+   - **modo PIVOTE**: `target` única para la rueda con sobrante.
+4. Cada llanta se detiene **apenas alcanza su `target` propio** (las dos pueden parar a tiempos distintos).
+5. Si terminó bien y todavía hay desfase, repite hasta `ENCODER_BALANCE_MAX_PASSES` veces (3 por defecto). Si alguna pasada se queda sin pulsos en `ENCODER_BALANCE_TIMEOUT_MS`, se corta y se envía `LISTO` con `BAL:fin:TIMEOUT:…`.
+6. Recién cuando el balance termina (o no era necesario), se manda `LISTO` al cliente. El panel lo muestra como `BAL SIM OK · 1 pasada · A 4 · B 4 pulsos (Δinicial -8 · Δesperado 0)`.
+
+**Importante con los contadores:** los FC-03 sólo cuentan flancos (no saben dirección), así que **el contador del encoder sólo crece**. En modo SIM, tras corregir un `Δ=-8` vas a ver `A=24 B=32 Δ=-8` (el Δ no cambia), pero las **rotaciones reales** sí están equilibradas. Para confirmar usá las líneas `BAL:iniciar:modo=1:…:targetA=4:targetB=4:dirA=FWD:dirB=REV:…` y `BAL:fin:OK:…:deltaA=4/4:deltaB=4/4:…`.
 
 Knobs en `FirmwareRobotLaberinto.ino` (recompilar para cambiarlos):
 
 | Define | Default | Qué hace |
 |--------|---------|----------|
 | `ENCODER_POST_MOVE_BALANCE` | `1` | Compila la fase de balance. `0` = la elimina. |
+| `ENCODER_BALANCE_MODE` | `1` | `1` = SIMÉTRICO/recto, `0` = PIVOTE/legacy. |
 | `ENCODER_BALANCE_MIN_DIFF` | `2` | Umbral para activar (ignora ruido de 1 pulso). |
-| `ENCODER_BALANCE_PWM` | `130` | PWM con que retrocede la rueda que sobró. |
-| `ENCODER_BALANCE_TIMEOUT_MS` | `1500` | Tope duro de la fase. |
+| `ENCODER_BALANCE_PWM` | `130` | PWM con que se mueven las llantas durante la corrección. |
+| `ENCODER_BALANCE_TIMEOUT_MS` | `1500` | Tope duro de cada pasada. |
+| `ENCODER_BALANCE_MAX_PASSES` | `3` | Pasadas extra si tras la primera quedaron desigualados. |
+| `ENCODER_BALANCE_RESPECT_PAIR_TARGETS` | `0` | `0` = siempre `A==B` (autonomía). `1` = respeta la asimetría manual de la cruceta. |
 
 **Comandos TCP runtime (sin recompilar):**
 
@@ -165,34 +222,98 @@ Knobs en `FirmwareRobotLaberinto.ino` (recompilar para cambiarlos):
 |---------|-----------|
 | `BALANCE:0` (o `BALANCE:OFF`) | `OK:BALANCE off` + `LISTO`. Apaga el balance hasta el próximo reinicio. |
 | `BALANCE:1` (o `BALANCE:ON`) | `OK:BALANCE on` + `LISTO`. |
-| `BALANCE` (o `BALANCE:STATUS`) | `BALANCE:enabled=…:active=…:mindiff=…:pwm=…:timeout_ms=…` + `LISTO`. |
+| `BALANCE` (o `BALANCE:STATUS`) | `BALANCE:enabled=…:active=…:mindiff=…:pwm=…:timeout_ms=…:passes=…:pair_targets=…:mode=…` + `LISTO`. |
 
-**Cómo probarlo desde el panel web (rápido):**
+**Cómo probarlo en el laberinto físico (autonomía, sin tocar nada):**
 
-1. Subí el firmware nuevo al ESP32. En el Monitor serie deberías leer:
-   `Balance post-MOVER (recto): ON min_diff=2 pwm=130 timeout=1500 ms — comandos: BALANCE:0/1/STATUS`.
-2. **Probar el retroceso por encoder aislado** (sin balance, prueba directa de pulsos negativos):
-   - En el panel manual, sección **Llanta A**, escribí `PULSOS = -5` y apretá **GIRAR LLANTA A**. La rueda A tiene que girar 5 pulsos hacia atrás y parar sola. Repetí con **Llanta B** (`-5` y **GIRAR LLANTA B**). Esto confirma que `MOTOR:A:E-N` funciona — es el mismo motor primitivo que usa el balance.
-3. **Probar el balance automático tras MOVEW** (cruceta con pulsos por flecha):
-   - Configurá `↑ A=10 B=10` (mismos pulsos para las dos llantas) y apretá **↑ ARRIBA**.
-   - Cuando termine, en el banner inferior tenés que leer algo así:
-     `MOVER adelante — LISTO · ENC A=12 B=14 Δ=-2 PWM 0/0 · BAL B retrocedió 2 pulsos (Δreal -2 · Δesperado 0)`.
-   - Si querés "forzar" desbalance para verificarlo, sube algo bajo una rueda o tapá un FC-03 unos pulsos: cuando vuelvas a apretar ↑ tiene que aparecer `BAL …`.
-4. **Probar el balance en MOVER por tiempo (sin pulsos por flecha):**
-   - **Apagá** "PULSOS POR LLANTA PARA FLECHAS" en el panel y apretá ↑ con `ms=600` (el panel ya manda `MOVER:ADELANTE:600`).
-   - Banner: `MOVER adelante — LISTO · ENC A=20 B=28 Δ=-8 PWM 0/0 · BAL B retrocedió 8 pulsos (Δreal -8 · Δesperado 0)`.
-5. **Configuración intencionalmente desigual** (no se debe corregir):
-   - Configurá `↑ A=25 B=10` (queremos a propósito que A dé 15 más que B). Apretá ↑.
-   - El banner debería NO incluir `BAL …` (la `expectedDiff = 15` se respeta; sólo se compensan derivas mayores al umbral).
-6. **Apagar el balance en caliente** (para comparar): por una terminal TCP (telnet a la IP en puerto 8888) mandá `BALANCE:0`. Repetí ↑ y ahora el banner queda con `Δ ≠ 0` y sin `BAL …`. Volvé a encender con `BALANCE:1`.
+1. **Reflasheá** el `.ino` (paso obligatorio: si no lo hacés, el firmware viejo todavía pivota una rueda sola y vas a seguir viendo "vueltas raras"). En el Monitor serie (115200 baud) al arrancar tiene que aparecer:
+   `Balance post-MOVER (recto): ON min_diff=2 pwm=130 timeout=1500 ms passes=3 pairTargets=0 mode=1 (SIMETRICO/recto) — comandos: BALANCE:0/1/STATUS`.
+2. Confirmá vía TCP (`telnet IP_ESP32 8888` o desde el simulador) que `BALANCE:STATUS` devuelve `…:mode=1`.
+3. Poné el carrito en la celda inicial del laberinto y arrancá la **autonomía** desde `Laberinto físico` como siempre. **No hace falta** tocar "PULSOS POR LLANTA PARA FLECHAS" — incluso si quedaron valores raros, el firmware los ignora para el balance.
+4. Tras CADA `MOVER:ADELANTE/ATRAS` (incluyendo los que manda la autonomía), el firmware emite SIEMPRE una línea sobre el balance, y el banner del panel la muestra:
+   - **`BAL ✓ recto · Δreal 1 (umbral 2)`** → el firmware revisó y no hizo falta corregir.
+   - **`BAL SIM OK · 1 pasada · A 4 · B 4 pulsos (Δinicial -8 · Δesperado 0)`** → corrigió simétricamente en una pasada.
+   - **`BAL SIM OK · 2 pasadas · A 6 · B 6 pulsos`** → necesitó dos rondas (suelo o PWM justo).
+   - **`BAL SIM TIMEOUT · A 3/4 · B 0/4 (pase 1)`** → un motor no rompe rozamiento; subí `ENCODER_BALANCE_PWM`.
+   - **`BAL apagado · Δreal -8`** → mandaste `BALANCE:0` y el balance está deshabilitado en runtime.
+   - **(sin línea BAL)** → estás corriendo el firmware viejo. Reflasheá.
+5. Si ves `BAL ✓ recto` después de cada paso pero el carro físicamente se tuerce: el FC-03 de una rueda no está contando bien (o cuenta el doble que el otro). Hacé girar a mano cada rueda y mirá si el LED del módulo parpadea con el mismo número de pulsos en una vuelta completa.
 
-**Importante:** los FC-03 cuentan flancos sin distinguir dirección, así que el contador del encoder **sólo crece**. Si A=20 B=28 y B retrocede 8, el ENC final será **A=20 B=36 (Δ=−16)** — físicamente B sí retrocedió, simplemente el contador subió igual. Por eso el panel muestra la línea `BAL B retrocedió 8 pulsos`: es la verdad del movimiento físico aunque la `Δ` numérica empeore.
+**Comprobaciones manuales sueltas (si dudás del hardware):**
 
-**Si el banner muestra `BAL B TIMEOUT (0/8 pulsos)`** (o cualquier `delta=0/…`):
+- **Pulsos negativos primitivos**: en el panel manual, **Llanta A → PULSOS=-5 → GIRAR LLANTA A**. La rueda A debe girar 5 pulsos hacia atrás y parar sola. Igual con Llanta B (`-5`). Es el mismo motor que usa el balance.
+- **Movimiento recto + balance forzado**: con la cruceta web mantené `↑ A=10 B=10` y apretá ↑. Banner típico: `… ENC A=12 B=14 Δ=-2 … · BAL SIM OK · 1 pasada · A 1 · B 1 pulsos`.
+- **Carro inclinado en una rueda**: ponele un papel grueso bajo una llanta para simular tracción asimétrica. Apretá ↑. Vas a ver `BAL SIM OK · 2-3 pasadas` con valores `A N · B M` mezclados — el firmware itera hasta dejar el carro derecho **sin hacerlo girar**.
+
+**Si el banner muestra `BAL SIM TIMEOUT · A 0/N · B …`:**
 
 - El motor no rompe rozamiento estático con `ENCODER_BALANCE_PWM=130`. Subílo a `160–180` y reflasheá.
 - Revisá el FC-03 de esa rueda: girando la rueda a mano debe parpadear el LED de señal del módulo.
-- Confirmá conexionado: `DO` de la llanta A → **GPIO34**, llanta B → **GPIO35**.
+- Confirmá conexionado: `DO` llanta A → **GPIO34**, llanta B → **GPIO35**.
+
+### 6.1.5 Cuidado: simulador activo sin querer
+
+Si en el panel `Laberinto físico` ves al robot avanzando en el grid pero el carrito **físicamente no se mueve**, casi seguro tenés el **simulador encendido** (pestaña `SIMULADOR` → checkbox "Activar simulación (sin ESP32)"). En ese modo `/api/leer` y `/api/mover` NO tocan el ESP32: todo es virtual.
+
+Indicadores visuales de simulador encendido:
+
+- En el header aparece un **chip naranja parpadeante** `⚠ SIMULADOR ON · ESP32 SIN RECIBIR`.
+- En el banner de autonomía: `⚠ SIMULADOR · Autonomía activa · … · ESP32 NO recibe comandos`.
+- El estado del agente arranca como `SIM · Autonomía` en lugar de `Autonomía`.
+- El strip de PING TCP dice `Simulador (sin TCP al ESP32)`.
+
+**Protección al iniciar autonomía**: si tocás `Iniciar autonomía` con simulador ON **e IP del ESP32 configurada**, el panel pide confirmación con un `confirm()`:
+
+> Simulador ENCENDIDO con IP configurada (192.168.x.x).
+> La autonomía NO va a tocar al ESP32 — todo es virtual. El carrito físico se queda quieto.
+> ¿Querés continuar simulando? (Cancelá para apagar el simulador y usar el ESP32 real.)
+
+Si cancelás, el panel **apaga el simulador automáticamente**. Vas a tener que volver a tocar `Iniciar autonomía` con sim ya apagado para que la autonomía hable con el ESP32 real.
+
+### 6.2 Modos del agente — reglas comunes anti-trabarse
+
+Todos los modos (1 Programado, 2 Reactivo, 3 Explorador, 4/5 Planner A*/BFS, 6 QL demo) **comparten ahora una capa común de reacción a sensores** antes de ejecutar su lógica específica:
+
+1. **`CELDA: VERDE` → meta alcanzada → autonomía detenida con éxito** (en cualquier modo).
+2. **`CELDA: ROJO` → confirmación 2-de-2** contra falsos-positivos del canal R del TCS34725:
+   - 1ra lectura ROJA → mensaje `Posible ROJO en TCS34725 — re-leo para confirmar (anti-falsos)`. NO se mueve nada, agenda el próximo ciclo.
+   - 2da lectura ROJA consecutiva → **retroceso automático de 1 paso** (`MOVER:ATRAS`) + **marca la celda anterior como OBSTÁCULO** en el mapa interno + **continúa la autonomía**. Modo 4/5 dispara `doPlan(true)` para replanear desde la nueva pose; modo 3 vacía `tcpQueue` para que el explorador recompute en el siguiente ciclo.
+   - Una sola lectura no-ROJA resetea el flag de pendiente.
+3. **Anti-loop en modos reactivos (2 y 6):**
+   - Cada giro `izquierda`/`derecha` incrementa `lfRecentTurnCount`. Cada `adelante`/`atras` lo resetea.
+   - El **modo 2** alterna `izquierda`/`derecha` (recuerda el último giro y elige el opuesto en la próxima curva). Si lleva ≥4 giros consecutivos sin avanzar, fuerza un `atras` para escaparse de esquinas.
+   - El **modo 6** elige aleatoriamente con sesgo: si el frente está libre (sin ultrasonido cerca, sin OBSTÁCULO marcado, dentro del grid), favorece `adelante`. Si no, sólo turns; con ≥3 giros consecutivos agrega `atras` al pool.
+4. **Out-of-bounds preventivo:**
+   - Antes de un `adelante`/`atras`, todos los modos calculan la celda destino. Si saldría del grid:
+     - Modo 1 (cola fija) descarta el paso y sigue con la cola.
+     - Modo 2 (reactivo) sustituye por giro alternado.
+     - Modo 3 (explorador) vacía la cola TCP y replanea en el siguiente ciclo.
+     - Modo 4/5 (planner) vacía la cola y replanea — esto se da sólo si el plan vino mal calculado (autoría externa).
+     - Modo 6 (QL) sustituye por giro alternado.
+5. **Rollback automático tras detectar ROJO durante el MOVER** (`execMover.lfLastDisplacementBlockedByRed`): el panel manda un pulso contrario sin preguntar y marca la celda al frente como `OBSTACULO` en el mapa interno. Modos 4/5 replanean automáticamente, modo 3 vacía la cola TCP.
+6. **Refresh de "Percepción en vivo" al parar:** cualquier `stopAutorun()` (manual o por meta) dispara un `leer(true)` final para que la insignia muestre el color real actual y no quede "pegada" en el último ROJO transitorio del bucle.
+
+**Específicamente por modo:**
+
+| Modo | Estrategia | Para por VERDE | Para por coordenadas | Anti-loop | Replanea |
+|------|------------|----------------|----------------------|-----------|----------|
+| 1 Programado | Cola TCP fija con descarte de pasos imposibles | sí | no | n/a | n/a |
+| 2 Reactivo | Reglas locales con giros alternados | sí | sí (Meta X/Y) | sí | n/a |
+| 3 Explorador | Plan a la frontera DESCONOCIDO más cercana | sí | no | n/a | sí (vaciado de cola) |
+| 4 A*/5 BFS | Plan completo → replanea cada ciclo | sí | sí (Meta X/Y) | n/a | sí (`doPlan(true)`) |
+| 6 QL demo | Random-walk sesgado | sí | no | sí | n/a |
+
+**Probarlo:** poné en la cola algo así para forzar cada caso:
+
+```
+adelante
+adelante
+adelante
+adelante
+adelante
+```
+
+en un grid 4×4 con el carro en `(0,0)` mirando arriba: tras 3 pasos llega al borde. El cuarto debería detenerse con el cartel "sale del mapa". Si ponés una celda roja en la trayectoria, debería detenerse al llegar con el cartel "celda ROJA detectada".
 
 ---
 

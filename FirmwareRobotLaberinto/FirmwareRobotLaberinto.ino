@@ -265,6 +265,35 @@ const unsigned long WIFI_RECONNECT_INTERVAL_MS = 5000;
 #ifndef ENCODER_BALANCE_TIMEOUT_MS
 #define ENCODER_BALANCE_TIMEOUT_MS 1500
 #endif
+/**
+ * En MOVEW:DIR:A=…:B=… (cruceta con pulsos por llanta), el balance puede
+ *   - igualar siempre A==B (default, modo "carro recto sin intervencion humana")
+ *   - o respetar la diferencia que pidio el usuario (legacy)
+ * En autonomia (laberinto fisico) queremos lo primero: aunque alguien haya
+ * configurado A=30 B=10 a mano, el balance corrige y deja A==B.
+ * Para volver al comportamiento legacy, definir = 1 antes de compilar.
+ */
+#ifndef ENCODER_BALANCE_RESPECT_PAIR_TARGETS
+#define ENCODER_BALANCE_RESPECT_PAIR_TARGETS 0
+#endif
+/** Vueltas extra del bucle: si tras el balance la diferencia sigue por
+ *  encima del umbral (PWM justo, suelo dificil), se vuelve a equilibrar
+ *  hasta este maximo de iteraciones. 0 = una sola pasada (legacy). */
+#ifndef ENCODER_BALANCE_MAX_PASSES
+#define ENCODER_BALANCE_MAX_PASSES 3
+#endif
+/**
+ * Como aplicar la correccion:
+ *   0 = "PIVOTE" (legacy) — la rueda con sobrante retrocede sola; la otra
+ *       queda detenida -> el chasis pivota (es lo que en pruebas se ve
+ *       como una "vuelta de 270 grados", cagada total).
+ *   1 = "SIMETRICO" (DEFAULT) — la rueda con sobrante retrocede |err|/2 y
+ *       la rueda lenta avanza |err|/2 al mismo tiempo. Las rotaciones netas
+ *       quedan iguales en ambas llantas, el chasis queda RECTO.
+ */
+#ifndef ENCODER_BALANCE_MODE
+#define ENCODER_BALANCE_MODE 1
+#endif
 #endif
 
 // ========== SERVO 180° (orientación del ultrasonido) ==========
@@ -346,7 +375,14 @@ bool tryBeginTcs34725() {
 // ========== CONSTANTES DE MOVIMIENTO (calibrar en físico) ==========
 /** Duración por defecto del pulso MOVER:* / MOTOR:*:ADELANTE|ATRAS (web / TCP). Opcional: <cmd>:50..60000 (ms), ej. MOVER:ADELANTE:250 */
 const unsigned long MS_MOVE_PULSE_MS = 5000;
-const int PWM_SPEED = 200;               // 0-255
+/** PWM por defecto del L298N en MOVER recto/giro (0-255). Bajo = más lento y menos distancia por ms.
+ *  Para celdas chicas (≤30 cm) con ms=750: 150 anda bien. Subí si el carro no rompe rozamiento. */
+#ifndef PWM_SPEED_DEFAULT
+#define PWM_SPEED_DEFAULT 150
+#endif
+/** Mutable en runtime via comando TCP `SPEED:N` (1..255). Persiste hasta el reinicio. */
+static int g_pwmSpeed = PWM_SPEED_DEFAULT;
+#define PWM_SPEED g_pwmSpeed
 
 /**
  * Tras MOVER:IZQUIERDA / MOVER:DERECHA, pulso extra ADELANTE (misma lógica que avance) a PWM bajo.
@@ -373,6 +409,9 @@ static bool g_postTurnSettling = false;
 static unsigned long g_postTurnSettleEnd = 0;
 static void motorApplyA(bool forward);
 static void motorApplyB(bool forward);
+#if USE_COLOR_SENSOR
+static void tcsMedianRaw(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c);
+#endif
 /** Prueba por llanta: MOTOR:A:* / MOTOR:B:* (solo un canal L298N a la vez en el pulso). */
 bool movingA = false;
 bool movingB = false;
@@ -411,11 +450,19 @@ static unsigned long g_encLastCtrlMs = 0;
 static uint8_t g_encStraightState = 0; /* 0=ok 1=ajuste 2=recuperacion 3=trabado suelo */
 /* ----- Balance post-MOVER / post-MOVEW ----- */
 static bool g_balanceActive = false;
-static bool g_balanceWheelIsA = false;   /* true: A retrocede; false: B retrocede */
+static bool g_balanceWheelIsA = false;   /* legacy modo PIVOTE: true=A retrocede sola */
 static uint8_t g_balanceMoverKind = 0;   /* 1 ADELANTE, 2 ATRAS (no se usa en giros) */
+static int32_t g_balanceExpectedDiff = 0;
+static uint8_t g_balancePassesLeft = 0;
 static uint32_t g_balanceStartA = 0;
 static uint32_t g_balanceStartB = 0;
-static uint32_t g_balanceTargetDelta = 0;
+static uint32_t g_balanceTargetDelta = 0;  /* legacy modo PIVOTE: pulsos para la rueda unica */
+/* Modo SIMETRICO: cada rueda tiene su propio objetivo de pulsos a partir del snapshot.
+ * 0 = rueda no se mueve en este balance (no necesita corregir). */
+static uint32_t g_balanceTargetA = 0;
+static uint32_t g_balanceTargetB = 0;
+static bool g_balanceADoneFlag = true;   /* true cuando A llego a su target o no necesita correr */
+static bool g_balanceBDoneFlag = true;
 static unsigned long g_balanceEndMs = 0;
 /* Estado de la ultima orden MOVEW recordada para arrancar el balance al terminar. */
 static uint8_t g_movewKind = 0;          /* 1 ADELANTE, 2 ATRAS, 3 IZQ, 4 DER */
@@ -842,6 +889,11 @@ static void encoderResetCounts() {
   g_encLastCtrlMs = 0;
   g_encLastLogMs = millis();
   g_balanceActive = false;
+  g_balancePassesLeft = 0;
+  g_balanceADoneFlag = true;
+  g_balanceBDoneFlag = true;
+  g_balanceTargetA = 0;
+  g_balanceTargetB = 0;
 }
 
 /** Estima pulsos/s de cada llanta (ventana ENCODER_VEL_WINDOW_MS). */
@@ -1125,9 +1177,9 @@ static void encoderLogFinalCounts() {
  * LISTO todavia).
  */
 static bool encoderBalanceMaybeStart(uint8_t moverKind, int32_t expectedDiff) {
-  if (!g_balanceEnabled) {
-    return false;
-  }
+  /* Para cualquier MOVE recto emitimos siempre una linea BAL:check para que
+   * el cliente vea que el firmware EVALUO el balance, aunque no haya hecho
+   * falta corregir. Si el balance esta desactivado, tambien lo decimos. */
   if (moverKind != 1 && moverKind != 2) {
     /* En giros A/B giran en sentido opuesto: la diferencia es geometria, no error. */
     return false;
@@ -1138,54 +1190,159 @@ static bool encoderBalanceMaybeStart(uint8_t moverKind, int32_t expectedDiff) {
   const int32_t actualDiff = (int32_t)ca - (int32_t)cb;
   const int32_t err = actualDiff - expectedDiff;
   const uint32_t aerr = (uint32_t)labs((long)err);
+  if (!g_balanceEnabled) {
+    if (client.connected() && g_balancePassesLeft == 0) {
+      client.print(F("BAL:check:disabled:actualDiff="));
+      client.print(actualDiff);
+      client.print(F(":expectedDiff="));
+      client.print(expectedDiff);
+      client.print(F(":err="));
+      client.println(err);
+    }
+    return false;
+  }
   if (aerr < (uint32_t)ENCODER_BALANCE_MIN_DIFF) {
+    /* Solo emitir el check si es la primera evaluacion (no en pasadas
+     * encadenadas; alli ya se emitio BAL:fin:OK). */
+    if (client.connected() && g_balancePassesLeft == 0) {
+      client.print(F("BAL:check:OK:actualDiff="));
+      client.print(actualDiff);
+      client.print(F(":expectedDiff="));
+      client.print(expectedDiff);
+      client.print(F(":err="));
+      client.print(err);
+      client.print(F(":threshold="));
+      client.println((int)ENCODER_BALANCE_MIN_DIFF);
+    }
     return false;
   }
   g_balanceWheelIsA = (err > 0);
   g_balanceMoverKind = moverKind;
+  g_balanceExpectedDiff = expectedDiff;
+  if (g_balancePassesLeft == 0) {
+    /* Primera pasada: armar contador. Si ya estamos en una pasada
+     * encadenada, conservar el valor (el caller lo decremento). */
+    int passes = ENCODER_BALANCE_MAX_PASSES;
+    if (passes < 1) {
+      passes = 1;
+    }
+    g_balancePassesLeft = (uint8_t)passes;
+  }
   g_balanceStartA = ca;
   g_balanceStartB = cb;
   g_balanceTargetDelta = aerr;
   g_balanceEndMs = millis() + (unsigned long)ENCODER_BALANCE_TIMEOUT_MS;
   g_balanceActive = true;
 
-  /* Sentido a aplicar: contrario al del MOVE que acaba de terminar. */
-  const bool reverseFwd = (moverKind == 2); /* ATRAS -> retrocede = adelante */
+  /* Sentido del MOVE original (lo que "quiere" cada llanta seguir haciendo):
+   *   moverKind == 1 (ADELANTE) -> ambas adelante; reverseFwd=false en el MOVE.
+   *   moverKind == 2 (ATRAS)    -> ambas atras;   reverseFwd=true  en el MOVE.
+   * Para el balance:
+   *   - La rueda con sobrante: sentido CONTRARIO al del MOVE.
+   *   - La rueda lenta:        sentido IGUAL    al del MOVE (avanza un toque).
+   * En modo PIVOTE solo la primera, la otra queda detenida (el chasis pivota).
+   */
+  const bool moveFwd = (moverKind == 1);              /* sentido del MOVE original */
+  const bool overshootFwd = !moveFwd;                  /* la sobrante retrocede */
+  const bool laggingFwd = moveFwd;                     /* la lenta sigue */
   const int pwm = constrain((int)ENCODER_BALANCE_PWM, (int)ENCODER_PWM_MIN, 255);
+
+  uint32_t halfA = 0; /* pulsos a contar en encoder A (independiente de direccion) */
+  uint32_t halfB = 0;
+  bool driveA = false;
+  bool driveB = false;
+  bool aFwd = false;
+  bool bFwd = false;
+#if ENCODER_BALANCE_MODE == 1
+  /* SIMETRICO: dividir el error a la mitad, y partes iguales en ambas ruedas. */
+  const uint32_t half = aerr / 2;
+  const uint32_t leftover = aerr - half; /* la rueda overshoot se lleva el +1 si es impar */
   if (g_balanceWheelIsA) {
-    motorApplyA(reverseFwd);
-    analogWrite(ENA, pwm);
-    analogWrite(ENB, 0);
+    /* A sobro: A retrocede (leftover), B avanza (half) */
+    halfA = leftover;
+    halfB = half;
+    aFwd = overshootFwd;
+    bFwd = laggingFwd;
   } else {
-    motorApplyB(reverseFwd);
+    /* B sobro: B retrocede (leftover), A avanza (half) */
+    halfA = half;
+    halfB = leftover;
+    aFwd = laggingFwd;
+    bFwd = overshootFwd;
+  }
+  driveA = (halfA > 0);
+  driveB = (halfB > 0);
+#else
+  /* PIVOTE (legacy) */
+  if (g_balanceWheelIsA) {
+    halfA = aerr;
+    halfB = 0;
+    aFwd = overshootFwd;
+    bFwd = false;
+    driveA = true;
+    driveB = false;
+  } else {
+    halfA = 0;
+    halfB = aerr;
+    aFwd = false;
+    bFwd = overshootFwd;
+    driveA = false;
+    driveB = true;
+  }
+#endif
+
+  g_balanceTargetA = halfA;
+  g_balanceTargetB = halfB;
+  g_balanceADoneFlag = !driveA;
+  g_balanceBDoneFlag = !driveB;
+
+  if (driveA) {
+    motorApplyA(aFwd);
+    analogWrite(ENA, pwm);
+  } else {
+    stopMotorA();
+  }
+  if (driveB) {
+    motorApplyB(bFwd);
     analogWrite(ENB, pwm);
-    analogWrite(ENA, 0);
+  } else {
+    stopMotorB();
   }
   if (client.connected()) {
-    client.print(F("BAL:iniciar:rueda="));
-    client.print(g_balanceWheelIsA ? 'A' : 'B');
+    client.print(F("BAL:iniciar:modo="));
+    client.print((int)ENCODER_BALANCE_MODE);
     client.print(F(":actualDiff="));
     client.print(actualDiff);
     client.print(F(":expectedDiff="));
     client.print(expectedDiff);
     client.print(F(":err="));
     client.print(err);
-    client.print(F(":target="));
-    client.print(g_balanceTargetDelta);
+    client.print(F(":targetA="));
+    client.print(halfA);
+    client.print(F(":targetB="));
+    client.print(halfB);
+    client.print(F(":dirA="));
+    client.print(driveA ? (aFwd ? F("FWD") : F("REV")) : F("-"));
+    client.print(F(":dirB="));
+    client.print(driveB ? (bFwd ? F("FWD") : F("REV")) : F("-"));
     client.print(F(":pwm="));
     client.println(pwm);
   }
 #if SERIAL_LOG_MOV
-  Serial.print(F("[BAL] iniciar actualDiff="));
+  Serial.print(F("[BAL] iniciar modo="));
+  Serial.print((int)ENCODER_BALANCE_MODE);
+  Serial.print(F(" actualDiff="));
   Serial.print(actualDiff);
   Serial.print(F(" expDiff="));
   Serial.print(expectedDiff);
   Serial.print(F(" err="));
   Serial.print(err);
-  Serial.print(F(" rueda="));
-  Serial.print(g_balanceWheelIsA ? 'A' : 'B');
-  Serial.print(F(" target="));
-  Serial.print(g_balanceTargetDelta);
+  Serial.print(F(" tA="));
+  Serial.print(halfA);
+  Serial.print(driveA ? (aFwd ? F("[FWD]") : F("[REV]")) : F("[-]"));
+  Serial.print(F(" tB="));
+  Serial.print(halfB);
+  Serial.print(driveB ? (bFwd ? F("[FWD]") : F("[REV]")) : F("[-]"));
   Serial.print(F(" PWM="));
   Serial.println(pwm);
 #endif
@@ -1205,39 +1362,74 @@ static bool encoderBalanceTick() {
   encoderGetLogical(ca, cb);
   const uint32_t deltaA = ca - g_balanceStartA;
   const uint32_t deltaB = cb - g_balanceStartB;
-  const uint32_t delta = g_balanceWheelIsA ? deltaA : deltaB;
-  const bool reached = (delta >= g_balanceTargetDelta);
-  const bool timeout = (millis() >= g_balanceEndMs);
-  if (reached || timeout) {
-    stopMotors();
-    g_balanceActive = false;
-    if (client.connected()) {
-      client.print(F("BAL:fin:"));
-      client.print(reached ? F("OK") : F("TIMEOUT"));
-      client.print(F(":rueda="));
-      client.print(g_balanceWheelIsA ? 'A' : 'B');
-      client.print(F(":delta="));
-      client.print(delta);
-      client.print(F("/"));
-      client.print(g_balanceTargetDelta);
-      client.print(F(":A="));
-      client.print(ca);
-      client.print(F(":B="));
-      client.println(cb);
-    }
-#if SERIAL_LOG_MOV
-    Serial.print(reached ? F("[BAL] OK fin A=") : F("[BAL] TIMEOUT A="));
-    Serial.print(ca);
-    Serial.print(F(" B="));
-    Serial.print(cb);
-    Serial.print(F(" delta="));
-    Serial.print(delta);
-    Serial.print(F("/"));
-    Serial.println(g_balanceTargetDelta);
-#endif
-    return true;
+
+  /* Detener cada rueda apenas alcanza su parte. */
+  if (!g_balanceADoneFlag && deltaA >= g_balanceTargetA) {
+    stopMotorA();
+    g_balanceADoneFlag = true;
   }
-  return false;
+  if (!g_balanceBDoneFlag && deltaB >= g_balanceTargetB) {
+    stopMotorB();
+    g_balanceBDoneFlag = true;
+  }
+
+  const bool reached = g_balanceADoneFlag && g_balanceBDoneFlag;
+  const bool timeout = (millis() >= g_balanceEndMs);
+  if (!(reached || timeout)) {
+    return false;
+  }
+
+  /* Cierre de pasada: detener cualquier rueda que haya quedado activa. */
+  stopMotors();
+  g_balanceActive = false;
+  const uint8_t passesUsedBefore =
+      (uint8_t)((g_balancePassesLeft > 0) ? (ENCODER_BALANCE_MAX_PASSES - g_balancePassesLeft + 1) : 1);
+  if (client.connected()) {
+    client.print(F("BAL:fin:"));
+    client.print(reached ? F("OK") : F("TIMEOUT"));
+    client.print(F(":pase="));
+    client.print((unsigned)passesUsedBefore);
+    client.print(F(":deltaA="));
+    client.print(deltaA);
+    client.print(F("/"));
+    client.print(g_balanceTargetA);
+    client.print(F(":deltaB="));
+    client.print(deltaB);
+    client.print(F("/"));
+    client.print(g_balanceTargetB);
+    client.print(F(":A="));
+    client.print(ca);
+    client.print(F(":B="));
+    client.println(cb);
+  }
+#if SERIAL_LOG_MOV
+  Serial.print(reached ? F("[BAL] OK fin pase ") : F("[BAL] TIMEOUT pase "));
+  Serial.print((unsigned)passesUsedBefore);
+  Serial.print(F(" dA="));
+  Serial.print(deltaA);
+  Serial.print(F("/"));
+  Serial.print(g_balanceTargetA);
+  Serial.print(F(" dB="));
+  Serial.print(deltaB);
+  Serial.print(F("/"));
+  Serial.print(g_balanceTargetB);
+  Serial.print(F(" totA="));
+  Serial.print(ca);
+  Serial.print(F(" totB="));
+  Serial.println(cb);
+#endif
+  /* Multi-pasada: si la pasada termino bien y quedan pases disponibles,
+   * intentar una nueva ronda con la misma referencia. */
+  if (reached && g_balancePassesLeft > 1) {
+    g_balancePassesLeft--;
+    const uint8_t kind = g_balanceMoverKind;
+    const int32_t expDiff = g_balanceExpectedDiff;
+    if (encoderBalanceMaybeStart(kind, expDiff)) {
+      return false; /* nueva pasada activa */
+    }
+  }
+  g_balancePassesLeft = 0;
+  return true;
 }
 #else
 static void initWheelEncoders() {}
@@ -1310,8 +1502,18 @@ void setup() {
   Serial.print((int)ENCODER_BALANCE_PWM);
   Serial.print(F(" timeout="));
   Serial.print((int)ENCODER_BALANCE_TIMEOUT_MS);
-  Serial.println(F(" ms — comandos: BALANCE:0/1/STATUS"));
+  Serial.print(F(" ms passes="));
+  Serial.print((int)ENCODER_BALANCE_MAX_PASSES);
+  Serial.print(F(" pairTargets="));
+  Serial.print((int)ENCODER_BALANCE_RESPECT_PAIR_TARGETS);
+  Serial.print(F(" mode="));
+  Serial.print((int)ENCODER_BALANCE_MODE);
+  Serial.print(F(ENCODER_BALANCE_MODE == 1 ? " (SIMETRICO/recto)" : " (PIVOTE/legacy)"));
+  Serial.println(F(" — comandos: BALANCE:0/1/STATUS"));
 #endif
+  Serial.print(F("PWM_SPEED inicial: "));
+  Serial.print(g_pwmSpeed);
+  Serial.println(F(" — runtime: SPEED:N (1..255)"));
   Serial.println(F("Buzzer ROJO en GPIO33 (solo suena con CELDA:ROJO)."));
 #if MOTOR_ACTIVITY_LED_PIN >= 0
   pinMode(MOTOR_ACTIVITY_LED_PIN, OUTPUT);
@@ -1466,7 +1668,7 @@ void dumpSensorReadingsSerialOnly() {
     }
   }
   if (hasColorSensor) {
-    tcs.getRawData(&r, &g, &b, &c);
+    tcsMedianRaw(r, g, b, c);
     celdaStr = classifyCell(r, g, b, c);
     colorEvaluado = true;
   }
@@ -1779,11 +1981,17 @@ void loop() {
       Serial.println(F("[MOV] Fin pulso (MOTOR)"));
 #endif
 #if USE_WHEEL_ENCODERS
-      /* Balance post-MOVEW (recto): A=20 -> objetivo 10 sobrepaso 10 -> retrocede 10. */
+      /* Balance post-MOVEW (recto): por default igualamos A==B aunque la
+       * cruceta haya pedido A!=B; el carro queda recto sin que el usuario
+       * tenga que calibrar pulses por flecha. */
       bool sendListoMotor = true;
       if (g_movewKind == 1 || g_movewKind == 2) {
+#if ENCODER_BALANCE_RESPECT_PAIR_TARGETS
         const int32_t expectedDiff =
             (int32_t)g_movewTargetA - (int32_t)g_movewTargetB;
+#else
+        const int32_t expectedDiff = 0;
+#endif
         if (encoderBalanceMaybeStart(g_movewKind, expectedDiff)) {
           sendListoMotor = false;
         }
@@ -2439,6 +2647,9 @@ void processCommand(String cmd) {
     g_motorWheelEncMag = 0;
 #if USE_WHEEL_ENCODERS
     g_balanceActive = false;
+    g_balancePassesLeft = 0;
+    g_balanceADoneFlag = true;
+    g_balanceBDoneFlag = true;
     g_movewKind = 0;
     g_movewTargetA = 0;
     g_movewTargetB = 0;
@@ -2493,14 +2704,37 @@ void processCommand(String cmd) {
     client.print(F(":pwm="));
     client.print((int)ENCODER_BALANCE_PWM);
     client.print(F(":timeout_ms="));
-    client.println((int)ENCODER_BALANCE_TIMEOUT_MS);
+    client.print((int)ENCODER_BALANCE_TIMEOUT_MS);
+    client.print(F(":passes="));
+    client.print((int)ENCODER_BALANCE_MAX_PASSES);
+    client.print(F(":pair_targets="));
+    client.print((int)ENCODER_BALANCE_RESPECT_PAIR_TARGETS);
+    client.print(F(":mode="));
+    client.println((int)ENCODER_BALANCE_MODE);
 #else
     client.println(F("BALANCE:DISABLED"));
 #endif
     client.println(F("LISTO"));
+  } else if (cmd.startsWith("SPEED:") || cmd == "SPEED") {
+    /* SPEED:N -> ajusta el PWM de MOVER (1..255) en caliente. SPEED -> consulta. */
+    if (cmd == "SPEED") {
+      client.print(F("SPEED:")); client.println(g_pwmSpeed);
+    } else {
+      String arg = cmd.substring(6);
+      arg.trim();
+      int v = arg.toInt();
+      if (v <= 0 || v > 255) {
+        client.println(F("ERR:SPEED:rango 1..255"));
+      } else {
+        g_pwmSpeed = v;
+        client.print(F("OK:SPEED:")); client.println(g_pwmSpeed);
+      }
+    }
+    client.println(F("LISTO"));
   } else if (cmd == "STATUS") {
     client.println("IP:" + WiFi.localIP().toString());
     client.println("RSSI:" + String(WiFi.RSSI()));
+    client.println("SPEED:" + String(g_pwmSpeed));
     client.println("LISTO");
   } else if (cmd == "HARDWARE") {
     sendHardwareReport();
@@ -2664,6 +2898,55 @@ String classifyCell(uint16_t r, uint16_t g, uint16_t b, uint16_t c) {
 
   lastSaturacion = fmaxf(pr, fmaxf(pg, pb)) - fminf(pr, fminf(pg, pb));
 
+  /* ===== REGLA PRIMARIA: clasificacion por MATIZ (HSV-Hue) =====
+   * El TCS34725 sufre IR-leak en el canal R: en suelos AZULES bajo luz mixta
+   * las proporciones quedan parejas (pr~0.34, pb~0.36) y las reglas por
+   * proporcion se confunden. El matiz (hue) es invariante a brillo y resiste
+   * ese sesgo: si B sigue siendo el canal mas alto (aunque sea por poco) el
+   * hue cae limpio en la banda 195-305 -> AZUL.
+   *
+   * Bandas (centro +/- margen, AZUL ancha porque el IR-leak desplaza azules hacia magenta):
+   *   ROJO  : hue >= 340 || hue <= 25     (centro 0,    ancho 45 grados)
+   *   VERDE : 70 <= hue <= 180            (centro 125,  ancho 110 grados)
+   *   AZUL  : 185 <= hue <= 330           (centro ~260, ancho 145 grados; absorbe magenta IR)
+   * Saturacion minima 0.08 para descartar grises (suelo claro/sombra).
+   */
+  {
+    uint16_t mx = r;
+    if (g > mx) mx = g;
+    if (b > mx) mx = b;
+    uint16_t mn = r;
+    if (g < mn) mn = g;
+    if (b < mn) mn = b;
+    if (mx > mn) {
+      const float delta = (float)(mx - mn);
+      float hue = 0.0f;
+      if (mx == r) {
+        hue = 60.0f * fmodf(((float)g - (float)b) / delta + 6.0f, 6.0f);
+      } else if (mx == g) {
+        hue = 60.0f * (((float)b - (float)r) / delta + 2.0f);
+      } else {
+        hue = 60.0f * (((float)r - (float)g) / delta + 4.0f);
+      }
+      const float sat = (mx > 0) ? (delta / (float)mx) : 0.0f;
+      lastHueGrados = hue;
+      if (sat >= 0.08f) {
+        if (hue >= 340.0f || hue <= 25.0f) {
+          lastColorRegla = "hue-ROJO";
+          return "ROJO";
+        }
+        if (hue >= 70.0f && hue <= 180.0f) {
+          lastColorRegla = "hue-VERDE";
+          return "VERDE";
+        }
+        if (hue >= 185.0f && hue <= 330.0f) {
+          lastColorRegla = "hue-AZUL";
+          return "AZUL";
+        }
+      }
+    }
+  }
+
   if (pb > g_tcsPbAzul && pb > pr && pb > pg) {
     lastColorRegla = "prop-AZUL";
     return "AZUL";
@@ -2728,11 +3011,39 @@ String classifyCell(uint16_t r, uint16_t g, uint16_t b, uint16_t c) {
 }
 #endif
 
+#if USE_COLOR_SENSOR
+/**
+ * Lee N veces el TCS34725 y devuelve la MEDIANA por canal.
+ * Mata bursts de IR/sombra que confunden al clasificador.
+ * Cada getRawData ya espera la integracion (~154 ms) si fue desde el ultimo enable;
+ * para reducir latencia, las muestras consecutivas usan la lectura buffereada.
+ */
+static void tcsMedianRaw(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
+  const int N = 3;
+  uint16_t rs[3], gs[3], bs[3], cs[3];
+  for (int i = 0; i < N; i++) {
+    uint16_t rr = 0, gg = 0, bb = 0, cc = 0;
+    tcs.getRawData(&rr, &gg, &bb, &cc);
+    rs[i] = rr; gs[i] = gg; bs[i] = bb; cs[i] = cc;
+  }
+  /* Mediana de 3 = mediano por seleccion. */
+  auto med3 = [](uint16_t a, uint16_t b2, uint16_t c2) -> uint16_t {
+    if ((a >= b2) ^ (a >= c2)) return a;
+    if ((b2 >= a) ^ (b2 >= c2)) return b2;
+    return c2;
+  };
+  r = med3(rs[0], rs[1], rs[2]);
+  g = med3(gs[0], gs[1], gs[2]);
+  b = med3(bs[0], bs[1], bs[2]);
+  c = med3(cs[0], cs[1], cs[2]);
+}
+#endif
+
 String readCellType() {
 #if USE_COLOR_SENSOR
   if (hasColorSensor) {
     uint16_t r, g, b, c;
-    tcs.getRawData(&r, &g, &b, &c);
+    tcsMedianRaw(r, g, b, c);
     return classifyCell(r, g, b, c);
   }
 #endif
@@ -2753,7 +3064,7 @@ void sendSensorReadings() {
     }
   }
   if (hasColorSensor) {
-    tcs.getRawData(&r, &g, &b, &c);
+    tcsMedianRaw(r, g, b, c);
     celdaStr = classifyCell(r, g, b, c);
     colorEvaluado = true;
   }

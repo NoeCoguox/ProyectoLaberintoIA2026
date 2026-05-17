@@ -179,96 +179,183 @@
 
   function parseBalanceFromRawLines(lines) {
     const out = {
-      ran: false,
-      ok: null,
-      timeout: false,
-      wheel: null,
-      err: null,
-      target: null,
-      delta: null,
-      actualDiff: null,
-      expectedDiff: null,
+      ran: false,            // hubo BAL:iniciar
+      seen: false,           // hubo cualquier línea BAL: (incluye BAL:check / BAL:disabled)
+      checkOnly: false,      // sólo BAL:check (firmware evaluó pero no hizo falta)
+      disabled: false,       // BAL:check:disabled (BALANCE:0 a runtime)
+      checkActualDiff: null,
+      checkExpectedDiff: null,
+      checkErr: null,
+      checkThreshold: null,
+      mode: null,            // 0=PIVOTE, 1=SIMETRICO
+      passes: 0,             // total de pasadas que terminaron (OK o TIMEOUT)
+      finishedOk: 0,         // de esas, las OK
+      timeout: false,        // si la ÚLTIMA pasada fue TIMEOUT
+      lastDeltaA: null,
+      lastDeltaB: null,
+      lastTargetA: null,
+      lastTargetB: null,
+      perWheel: { A: 0, B: 0 }, // suma de pulsos rotados durante balance, por rueda
+      initial: null,         // primer BAL:iniciar (referencia)
       finalA: null,
       finalB: null,
-      pwm: null,
     };
     if (!lines || !lines.length) return out;
     for (let i = 0; i < lines.length; i++) {
       const line = String(lines[i] || "");
-      if (!line.toUpperCase().startsWith("BAL:")) continue;
-      out.ran = true;
-      const mWheel = line.match(/RUEDA=([AB])/i);
-      if (mWheel) out.wheel = mWheel[1].toUpperCase();
-      const mTarget = line.match(/TARGET=(-?\d+)/i);
-      if (mTarget) out.target = parseInt(mTarget[1], 10);
-      const mPwm = line.match(/PWM=(\d+)/i);
-      if (mPwm) out.pwm = parseInt(mPwm[1], 10);
-      const mErr = line.match(/ERR=(-?\d+)/i);
-      if (mErr) out.err = parseInt(mErr[1], 10);
-      const mActual = line.match(/ACTUALDIFF=(-?\d+)/i);
-      if (mActual) out.actualDiff = parseInt(mActual[1], 10);
-      const mExp = line.match(/EXPECTEDDIFF=(-?\d+)/i);
-      if (mExp) out.expectedDiff = parseInt(mExp[1], 10);
-      const mDelta = line.match(/DELTA=(\d+)\/(\d+)/i);
-      if (mDelta) {
-        out.delta = parseInt(mDelta[1], 10);
-        out.target = parseInt(mDelta[2], 10);
+      const u = line.toUpperCase();
+      if (!u.startsWith("BAL:")) continue;
+      out.seen = true;
+      const isCheck = u.startsWith("BAL:CHECK");
+      if (!isCheck) {
+        out.ran = true;
       }
+
+      const mPwm = line.match(/PWM=(\d+)/i);
+      const mErr = line.match(/ERR=(-?\d+)/i);
+      const mActual = line.match(/ACTUALDIFF=(-?\d+)/i);
+      const mExp = line.match(/EXPECTEDDIFF=(-?\d+)/i);
+      const mThr = line.match(/THRESHOLD=(\d+)/i);
+      const mMode = line.match(/MODO=(\d+)/i);
+      const mTargetA = line.match(/TARGETA=(\d+)/i);
+      const mTargetB = line.match(/TARGETB=(\d+)/i);
+      const mDirA = line.match(/DIRA=([A-Z\-]+)/i);
+      const mDirB = line.match(/DIRB=([A-Z\-]+)/i);
+      const mDeltaA = line.match(/DELTAA=(\d+)\/(\d+)/i);
+      const mDeltaB = line.match(/DELTAB=(\d+)\/(\d+)/i);
+      // Compat con BAL:fin viejo (modo PIVOTE legacy): rueda=X delta=N/M
+      const mWheel = line.match(/RUEDA=([AB])/i);
+      const mDeltaLegacy = line.match(/DELTA=(\d+)\/(\d+)/i);
+      const mTargetLegacy = line.match(/TARGET=(-?\d+)/i);
       const mA = line.match(/:A=(\d+)/i);
       const mB = line.match(/:B=(\d+)/i);
-      if (mA) out.finalA = parseInt(mA[1], 10);
-      if (mB) out.finalB = parseInt(mB[1], 10);
-      if (/BAL:FIN:OK/i.test(line)) {
-        out.ok = true;
-      } else if (/BAL:FIN:TIMEOUT/i.test(line)) {
-        out.ok = false;
-        out.timeout = true;
+
+      if (isCheck) {
+        out.checkOnly = !out.ran;
+        out.disabled = /DISABLED/i.test(line);
+        if (mActual) out.checkActualDiff = parseInt(mActual[1], 10);
+        if (mExp) out.checkExpectedDiff = parseInt(mExp[1], 10);
+        if (mErr) out.checkErr = parseInt(mErr[1], 10);
+        if (mThr) out.checkThreshold = parseInt(mThr[1], 10);
+        continue;
+      }
+      out.checkOnly = false;
+      if (u.startsWith("BAL:INICIAR")) {
+        if (mMode) out.mode = parseInt(mMode[1], 10);
+        if (!out.initial) {
+          out.initial = {
+            mode: mMode ? parseInt(mMode[1], 10) : null,
+            targetA: mTargetA ? parseInt(mTargetA[1], 10) : (mTargetLegacy ? parseInt(mTargetLegacy[1], 10) : null),
+            targetB: mTargetB ? parseInt(mTargetB[1], 10) : null,
+            dirA: mDirA ? mDirA[1].toUpperCase() : null,
+            dirB: mDirB ? mDirB[1].toUpperCase() : null,
+            wheel: mWheel ? mWheel[1].toUpperCase() : null,
+            target: mTargetLegacy ? parseInt(mTargetLegacy[1], 10) : null,
+            pwm: mPwm ? parseInt(mPwm[1], 10) : null,
+            err: mErr ? parseInt(mErr[1], 10) : null,
+            actualDiff: mActual ? parseInt(mActual[1], 10) : null,
+            expectedDiff: mExp ? parseInt(mExp[1], 10) : null,
+          };
+        }
+        continue;
+      }
+      if (u.startsWith("BAL:FIN")) {
+        out.passes += 1;
+        if (mDeltaA) {
+          out.lastDeltaA = parseInt(mDeltaA[1], 10);
+          out.lastTargetA = parseInt(mDeltaA[2], 10);
+        }
+        if (mDeltaB) {
+          out.lastDeltaB = parseInt(mDeltaB[1], 10);
+          out.lastTargetB = parseInt(mDeltaB[2], 10);
+        }
+        // Compat legacy: BAL:fin con rueda=X y delta=N/M
+        if (!mDeltaA && !mDeltaB && mDeltaLegacy && mWheel) {
+          const w = mWheel[1].toUpperCase();
+          if (w === "A") {
+            out.lastDeltaA = parseInt(mDeltaLegacy[1], 10);
+            out.lastTargetA = parseInt(mDeltaLegacy[2], 10);
+          } else {
+            out.lastDeltaB = parseInt(mDeltaLegacy[1], 10);
+            out.lastTargetB = parseInt(mDeltaLegacy[2], 10);
+          }
+        }
+        if (mA) out.finalA = parseInt(mA[1], 10);
+        if (mB) out.finalB = parseInt(mB[1], 10);
+        if (/BAL:FIN:OK/i.test(line)) {
+          out.finishedOk += 1;
+          out.timeout = false;
+          if (out.lastDeltaA != null) out.perWheel.A += out.lastDeltaA;
+          if (out.lastDeltaB != null) out.perWheel.B += out.lastDeltaB;
+        } else if (/BAL:FIN:TIMEOUT/i.test(line)) {
+          out.timeout = true;
+        }
       }
     }
     return out;
   }
 
   function formatBalanceStatus(bal) {
-    if (!bal || !bal.ran) return "";
-    const wheel = bal.wheel || "?";
-    if (bal.ok === true) {
-      let s =
-        "BAL " +
-        wheel +
-        " retrocedió " +
-        (bal.delta != null ? bal.delta : "?") +
-        " pulsos";
-      if (bal.target != null && bal.target !== bal.delta) {
-        s += "/" + bal.target;
+    if (!bal || !bal.seen) return "";
+    if (bal.checkOnly) {
+      if (bal.disabled) {
+        return (
+          "BAL apagado · Δreal " +
+          (bal.checkActualDiff != null ? bal.checkActualDiff : "?") +
+          " (BALANCE:1 para activar)"
+        );
       }
-      if (bal.actualDiff != null && bal.expectedDiff != null) {
-        s +=
-          " (Δreal " +
-          bal.actualDiff +
-          " · Δesperado " +
-          bal.expectedDiff +
-          ")";
-      }
-      return s;
+      return (
+        "BAL ✓ recto · Δreal " +
+        (bal.checkActualDiff != null ? bal.checkActualDiff : "?") +
+        " (umbral " +
+        (bal.checkThreshold != null ? bal.checkThreshold : "?") +
+        ")"
+      );
+    }
+    if (!bal.ran) return "";
+    const init = bal.initial;
+    const modeStr = bal.mode === 0 ? "PIVOTE" : "SIM";
+    if (bal.passes === 0) {
+      const tA = init && init.targetA != null ? init.targetA : "?";
+      const tB = init && init.targetB != null ? init.targetB : "?";
+      return "BAL " + modeStr + " arrancó (A→" + tA + " · B→" + tB + ")";
     }
     if (bal.timeout) {
       return (
         "BAL " +
-        wheel +
-        " TIMEOUT (" +
-        (bal.delta != null ? bal.delta : "?") +
+        modeStr +
+        " TIMEOUT · A " +
+        (bal.lastDeltaA != null ? bal.lastDeltaA : "?") +
         "/" +
-        (bal.target != null ? bal.target : "?") +
-        " pulsos) — revisá FC-03 o subí PWM"
+        (bal.lastTargetA != null ? bal.lastTargetA : "?") +
+        " · B " +
+        (bal.lastDeltaB != null ? bal.lastDeltaB : "?") +
+        "/" +
+        (bal.lastTargetB != null ? bal.lastTargetB : "?") +
+        " (pase " +
+        bal.passes +
+        ") — revisá FC-03 o subí PWM"
       );
     }
-    return (
+    let s =
       "BAL " +
-      wheel +
-      " arrancó (target " +
-      (bal.target != null ? bal.target : "?") +
-      ")"
-    );
+      modeStr +
+      " OK · " +
+      bal.passes +
+      (bal.passes === 1 ? " pasada" : " pasadas");
+    if (bal.perWheel.A > 0 || bal.perWheel.B > 0) {
+      s += " · A " + bal.perWheel.A + " · B " + bal.perWheel.B + " pulsos";
+    }
+    if (init && init.actualDiff != null && init.expectedDiff != null) {
+      s +=
+        " (Δinicial " +
+        init.actualDiff +
+        " · Δesperado " +
+        init.expectedDiff +
+        ")";
+    }
+    return s;
   }
 
   function calibrationSummaryLine() {
